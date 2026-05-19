@@ -149,7 +149,6 @@ function TemplateManager() {
     select: templateSelection,
     sort: { sortOrder: "Ascending" },
     search: search.trim() || undefined,
-    live: true,
   }) as any;
 
   const templates = fetchedTemplates as TemplateRecord[] | undefined;
