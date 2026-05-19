@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { useFindMany } from "@gadgetinc/react";
-import { api } from "./api";
+import { api, type TemplateRecord } from "./api";
 
 type TemplateFormState = {
   name: string;
-  badge: string;
+  badge?: string;
   category: "Studio" | "Lifestyle" | "Seasonal" | "Brand";
   creditsRequired: number;
   description: string;
@@ -12,10 +11,6 @@ type TemplateFormState = {
   prompt: string;
   sortOrder: number;
   visibility: "public" | "hidden";
-};
-
-type TemplateRecord = TemplateFormState & {
-  id: string;
 };
 
 const templateSelection = {
@@ -46,7 +41,7 @@ const emptyTemplate: TemplateFormState = {
 const portalUsername = import.meta.env.VITE_PORTAL_USERNAME;
 const portalPassword = import.meta.env.VITE_PORTAL_PASSWORD;
 const loginConfigured = Boolean(portalUsername && portalPassword);
-const templateApi = api as any;
+
 
 function toDraft(template: Partial<TemplateFormState>): TemplateFormState {
   return {
@@ -145,13 +140,26 @@ function TemplateManager() {
   const [busyAction, setBusyAction] = useState<"create" | "update" | "delete" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const [{ data: fetchedTemplates, fetching, error }] = useFindMany(templateApi.template as any, {
-    select: templateSelection,
-    sort: { sortOrder: "Ascending" },
-    search: search.trim() || undefined,
-  }) as any;
+  const [templates, setTemplates] = useState<TemplateRecord[]>([]);
+  const [fetching, setFetching] = useState<boolean>(true);
+  const [error, setError] = useState<any>(null);
 
-  const templates = fetchedTemplates as TemplateRecord[] | undefined;
+  const fetchTemplates = async () => {
+    setFetching(true);
+    try {
+      const data = await api.template.findMany({ search: search.trim() || undefined });
+      setTemplates(data);
+      setError(null);
+    } catch (err: any) {
+      setError(err);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchTemplates();
+  }, [search]);
 
   const selectedTemplate = useMemo(
     () => templates?.find((template) => template.id === selectedTemplateId) ?? null,
@@ -192,17 +200,19 @@ function TemplateManager() {
     try {
       if (isEditing && selectedTemplateId) {
         setBusyAction("update");
-        await templateApi.template.update({ id: selectedTemplateId, ...payload });
+        await api.template.update(selectedTemplateId, payload);
+        await fetchTemplates();
         return;
       }
 
       setBusyAction("create");
-      const created = await templateApi.template.create(payload);
-      const createdId = created?.id ?? created?.data?.id;
+      const created = await api.template.create(payload);
+      const createdId = created?.id;
 
       if (createdId) {
         setSelectedTemplateId(createdId);
       }
+      await fetchTemplates();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -220,12 +230,13 @@ function TemplateManager() {
 
     try {
       setBusyAction("delete");
-      await templateApi.template.delete({ id: templateId });
+      await api.template.delete(templateId);
 
       if (selectedTemplateId === templateId) {
         setSelectedTemplateId(null);
         setDraft(emptyTemplate);
       }
+      await fetchTemplates();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
