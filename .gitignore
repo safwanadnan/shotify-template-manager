@@ -1,5 +1,6 @@
 # Dependencies
 /node_modules/
+node_modules/
 
 # Build output
 /dist/
@@ -28,3 +29,4 @@ Thumbs.db
 
 # Optional npm cache
 .npm
+.next
