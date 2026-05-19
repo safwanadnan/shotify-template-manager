@@ -33,8 +33,8 @@ const emptyTemplate: TemplateFormState = {
   visibility: "hidden",
 };
 
-const portalUsername = process.env.VITE_PORTAL_USERNAME;
-const portalPassword = process.env.VITE_PORTAL_PASSWORD;
+const portalUsername = process.env.PORTAL_USERNAME;
+const portalPassword = process.env.PORTAL_PASSWORD;
 const loginConfigured = Boolean(portalUsername && portalPassword);
 
 function toDraft(template: Partial<TemplateFormState>): TemplateFormState {
@@ -113,7 +113,7 @@ function LoginPortal({ onLogin }: { onLogin: () => void }) {
             {loginError ? <p className="status error">{loginError}</p> : null}
             {!loginConfigured ? (
               <p className="status error">
-                Configure <code>VITE_PORTAL_USERNAME</code> and <code>VITE_PORTAL_PASSWORD</code> in <code>.env</code>.
+                Configure <code>PORTAL_USERNAME</code> and <code>PORTAL_PASSWORD</code> in <code>.env</code>.
               </p>
             ) : null}
             

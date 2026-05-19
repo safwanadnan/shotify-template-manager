@@ -2,8 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   env: {
-    VITE_PORTAL_USERNAME: process.env.VITE_PORTAL_USERNAME,
-    VITE_PORTAL_PASSWORD: process.env.VITE_PORTAL_PASSWORD,
+    PORTAL_USERNAME: process.env.PORTAL_USERNAME,
+    PORTAL_PASSWORD: process.env.PORTAL_PASSWORD,
   },
 };
 
