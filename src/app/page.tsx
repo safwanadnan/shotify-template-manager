@@ -51,6 +51,7 @@ function toDraft(template: Partial<TemplateFormState>): TemplateFormState {
   };
 }
 
+/* ── Login Portal ── */
 function LoginPortal({ onLogin }: { onLogin: () => void }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -74,59 +75,56 @@ function LoginPortal({ onLogin }: { onLogin: () => void }) {
   };
 
   return (
-    <div style={{ position: "relative", minHeight: "100vh", overflow: "hidden" }}>
-      <div className="glow-blob glow-blob-1"></div>
-      <div className="glow-blob glow-blob-2"></div>
-      
-      <main className="shell">
-        <div className="login-card panel">
-          <div className="login-header-glow">
-            <div className="logo-icon">✨</div>
-            <h1>Template Studio</h1>
-            <p className="hero-copy" style={{ fontSize: "0.95rem" }}>
-              Secure management dashboard for your AI image-generation templates.
-            </p>
-          </div>
-          
-          <form className="editor-form" onSubmit={handleLogin}>
-            <div className="form-group">
-              <label>Username</label>
-              <input
-                required
-                placeholder="Enter username"
-                value={username}
-                onChange={(event) => setUsername(event.target.value)}
-              />
-            </div>
-            
-            <div className="form-group">
-              <label>Password</label>
-              <input
-                required
-                type="password"
-                placeholder="Enter password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </div>
-            
-            {loginError ? <p className="status error">{loginError}</p> : null}
-            {!loginConfigured ? (
-              <p className="status error">
-                Configure <code>PORTAL_USERNAME</code> and <code>PORTAL_PASSWORD</code> in <code>.env</code>.
-              </p>
-            ) : null}
-            
-            <button type="submit" style={{ marginTop: "12px", width: "100%" }}>
-              Sign In to Portal
-            </button>
-          </form>
+    <div className="login-page">
+      <div className="login-card">
+        <div className="login-header">
+          <div className="login-logo">✨</div>
+          <h1>Template Studio</h1>
+          <p className="login-subtitle">
+            Secure management dashboard for your AI image-generation templates.
+          </p>
         </div>
-      </main>
+
+        <form className="editor-form" onSubmit={handleLogin}>
+          <div className="form-group">
+            <label>Username</label>
+            <input
+              required
+              type="text"
+              placeholder="Enter username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+            />
+          </div>
+
+          <div className="form-group">
+            <label>Password</label>
+            <input
+              required
+              type="password"
+              placeholder="Enter password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </div>
+
+          {loginError ? <p className="status error">{loginError}</p> : null}
+          {!loginConfigured ? (
+            <p className="status error">
+              Configure <code>PORTAL_USERNAME</code> and <code>PORTAL_PASSWORD</code> in <code>.env</code>.
+            </p>
+          ) : null}
+
+          <button type="submit" className="btn-primary">
+            Sign In to Portal
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
 
+/* ── Main Dashboard ── */
 function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
   const [search, setSearch] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -138,7 +136,7 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
   const [fetching, setFetching] = useState<boolean>(true);
   const [error, setError] = useState<any>(null);
 
-  // Lightbox Modal state
+  /* Lightbox Modal state */
   const [previewTemplate, setPreviewTemplate] = useState<TemplateRecord | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
 
@@ -169,7 +167,6 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
       setDraft(toDraft(selectedTemplate));
       return;
     }
-
     if (!selectedTemplateId) {
       setDraft(emptyTemplate);
     }
@@ -191,6 +188,10 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
 
     const payload = {
       ...draft,
+      prompt: draft.prompt.trim(),
+      name: draft.name.trim(),
+      description: draft.description.trim(),
+      badge: draft.badge?.trim() || undefined,
       creditsRequired: Number(draft.creditsRequired),
       sortOrder: Number(draft.sortOrder),
     };
@@ -220,9 +221,7 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
 
   const handleDelete = async (templateId: string) => {
     const confirmed = window.confirm("Delete this template? This cannot be undone.");
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     setActionError(null);
 
@@ -252,332 +251,393 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
     }
   };
 
-  return (
-    <div style={{ position: "relative" }}>
-      <div className="glow-blob glow-blob-1"></div>
-      <div className="glow-blob glow-blob-2"></div>
+  const categoryClass = (cat: string) => {
+    const map: Record<string, string> = {
+      Studio: "cat-studio",
+      Lifestyle: "cat-lifestyle",
+      Seasonal: "cat-seasonal",
+      Brand: "cat-brand",
+    };
+    return map[cat] ?? "";
+  };
 
-      <header className="nav-header">
+  return (
+    <>
+      {/* ── Global Nav ── */}
+      <header className="global-nav">
         <div className="nav-container">
-          <a href="#" className="logo-wrapper">
-            <div className="logo-icon">✨</div>
-            <span className="logo-text">Template Studio</span>
+          <a href="#" className="nav-logo">
+            <span className="nav-logo-icon">✦</span>
+            <span>Template Studio</span>
           </a>
           <div className="nav-actions">
-            <div className="user-badge">
-              <span className="pulse-indicator"></span>
-              <span>Connected to Gadget</span>
-            </div>
-            <button onClick={onSignOut} className="ghost" style={{ padding: "8px 16px", fontSize: "0.85rem", borderRadius: "8px" }}>
+            <span className="nav-status">
+              <span className="nav-status-dot" />
+              Connected
+            </span>
+            <button onClick={onSignOut} className="btn-dark-utility">
               Sign Out
             </button>
           </div>
         </div>
       </header>
 
-      <main className="shell">
+      <div className="shell">
+        {/* ── Hero ── */}
         <section className="hero">
-          <div className="hero-content">
-            <span className="eyebrow">Realtime Synced</span>
-            <h1>Manage your generation styles.</h1>
-            <p className="hero-copy">
-              Compose, configure, and instantly test template prompts against your Gadget server database. Click template images to preview generation data.
-            </p>
-          </div>
+          <span className="hero-eyebrow">Realtime Synced</span>
+          <h1>Manage your generation styles.</h1>
+          <p className="hero-tagline">
+            Compose, configure, and instantly test template prompts against your
+            Gadget server database. Click template images to preview generation data.
+          </p>
 
           <div className="hero-stats">
-            <article>
-              <span>Total Styles</span>
-              <strong>{templates?.length ?? 0}</strong>
+            <article className="hero-stat">
+              <span className="hero-stat-label">Total Styles</span>
+              <span className="hero-stat-value">{templates?.length ?? 0}</span>
             </article>
-            <article>
-              <span>Composer Mode</span>
-              <strong>{isEditing ? "Edit" : "New"}</strong>
+            <article className="hero-stat">
+              <span className="hero-stat-label">Composer Mode</span>
+              <span className="hero-stat-value">{isEditing ? "Edit" : "New"}</span>
             </article>
           </div>
         </section>
 
-        <section className="toolbar">
-          <div className="search-wrapper">
-            <span className="search-icon-decor">🔍</span>
-            <input
-              className="search-input"
-              type="search"
-              placeholder="Search styles by name, description, or tag prompt..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => {
-              setSelectedTemplateId(null);
-              setDraft(emptyTemplate);
-            }}
-          >
-            Clear / Create New
-          </button>
-        </section>
-
-        <section className="workspace">
-          <aside className="panel">
-            <div className="panel-heading">
-              <div>
-                <p className="panel-label">Designer Tool</p>
-                <h2>{isEditing ? selectedTemplate?.name ?? "Edit Style" : "New Style"}</h2>
-              </div>
-              {isEditing && selectedTemplateId && (
-                <button type="button" className="danger-btn" onClick={() => void handleDelete(selectedTemplateId)}>
-                  Delete
-                </button>
-              )}
+        {/* ── Toolbar ── */}
+        <div className="toolbar">
+          <div className="toolbar-inner">
+            <div className="search-wrapper">
+              <span className="search-icon">🔍</span>
+              <input
+                className="search-input"
+                type="search"
+                placeholder="Search styles by name, description, or prompt..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
             </div>
 
-            <form className="editor-form" onSubmit={submitTemplate}>
-              <div className="form-group">
-                <label>Style Name <span className="required">*</span></label>
-                <input
-                  required
-                  value={draft.name}
-                  onChange={(event) => handleFieldChange("name", event.target.value)}
-                  placeholder="e.g. Neon Cyberpunk Portrait"
-                />
-              </div>
+            <button
+              type="button"
+              className="btn-pearl"
+              onClick={() => {
+                setSelectedTemplateId(null);
+                setDraft(emptyTemplate);
+              }}
+            >
+              Clear / Create New
+            </button>
+          </div>
+        </div>
 
-              <div className="form-group">
-                <label>Feature Badge</label>
-                <input
-                  value={draft.badge}
-                  onChange={(event) => handleFieldChange("badge", event.target.value)}
-                  placeholder="e.g. Trending, Hot, V2"
-                />
-              </div>
-
-              <div className="two-up">
-                <div className="form-group">
-                  <label>Category</label>
-                  <select
-                    value={draft.category}
-                    onChange={(event) => handleFieldChange("category", event.target.value as TemplateFormState["category"])}
-                  >
-                    <option value="Studio">Studio</option>
-                    <option value="Lifestyle">Lifestyle</option>
-                    <option value="Seasonal">Seasonal</option>
-                    <option value="Brand">Brand</option>
-                  </select>
+        {/* ── Workspace ── */}
+        <div className="workspace-area">
+          <div className="workspace">
+            {/* Editor Panel */}
+            <aside className="editor-panel">
+              <div className="editor-header">
+                <div>
+                  <p className="editor-label">Designer Tool</p>
+                  <h2>{isEditing ? selectedTemplate?.name ?? "Edit Style" : "New Style"}</h2>
                 </div>
-
-                <div className="form-group">
-                  <label>Visibility</label>
-                  <select
-                    value={draft.visibility}
-                    onChange={(event) => handleFieldChange("visibility", event.target.value as TemplateFormState["visibility"])}
-                  >
-                    <option value="hidden">Hidden</option>
-                    <option value="public">Public</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="two-up">
-                <div className="form-group">
-                  <label>Credits Required</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={draft.creditsRequired}
-                    onChange={(event) => handleFieldChange("creditsRequired", Number(event.target.value))}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label>Sort Order</label>
-                  <input
-                    type="number"
-                    value={draft.sortOrder}
-                    onChange={(event) => handleFieldChange("sortOrder", Number(event.target.value))}
-                  />
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label>Display Image URL <span className="required">*</span></label>
-                <input
-                  type="url"
-                  required
-                  value={draft.displayImageUrl}
-                  onChange={(event) => handleFieldChange("displayImageUrl", event.target.value)}
-                  placeholder="https://images.unsplash.com/..."
-                />
-              </div>
-
-              <div className="form-group">
-                <label>Description <span className="required">*</span></label>
-                <textarea
-                  required
-                  rows={3}
-                  value={draft.description}
-                  onChange={(event) => handleFieldChange("description", event.target.value)}
-                  placeholder="Explain what visual aspects this template generates..."
-                />
-              </div>
-
-              <div className="form-group">
-                <label>Generation Prompt <span className="required">*</span></label>
-                <textarea
-                  required
-                  rows={6}
-                  value={draft.prompt}
-                  onChange={(event) => handleFieldChange("prompt", event.target.value)}
-                  placeholder="Model prompt containing variables, e.g. 'A stunning dynamic portrait of [subject] in cyberpunk style, high-end photography...'"
-                />
-              </div>
-
-              {actionError && <p className="status error">{actionError}</p>}
-
-              <div className="actions">
-                <button type="submit" disabled={isSaving}>
-                  {isSaving ? "Saving changes..." : isEditing ? "Save Style" : "Add to Library"}
-                </button>
-
-                {isEditing && (
+                {isEditing && selectedTemplateId && (
                   <button
                     type="button"
-                    className="secondary"
-                    onClick={() => {
-                      setSelectedTemplateId(null);
-                      setDraft(emptyTemplate);
-                    }}
+                    className="text-link"
+                    style={{ color: "#d32f2f" }}
+                    onClick={() => void handleDelete(selectedTemplateId)}
                   >
-                    Cancel
+                    Delete
                   </button>
                 )}
               </div>
-            </form>
-          </aside>
 
-          <section className="panel list-panel">
-            <div className="grid-header">
-              <h2>Styles Inventory</h2>
-              <span className="record-count-badge">
-                {fetching ? "Syncing..." : `${templates?.length ?? 0} Styles`}
-              </span>
-            </div>
+              <form className="editor-form" onSubmit={submitTemplate}>
+                <div className="form-group">
+                  <label>
+                    Style Name <span className="required">*</span>
+                  </label>
+                  <input
+                    required
+                    type="text"
+                    value={draft.name}
+                    onChange={(event) => handleFieldChange("name", event.target.value)}
+                    placeholder="e.g. Neon Cyberpunk Portrait"
+                  />
+                </div>
 
-            {error && <div className="status error" style={{ marginBottom: "20px" }}>{error.message}</div>}
+                <div className="form-group">
+                  <label>Feature Badge</label>
+                  <input
+                    type="text"
+                    value={draft.badge}
+                    onChange={(event) => handleFieldChange("badge", event.target.value)}
+                    placeholder="e.g. Trending, Hot, V2"
+                  />
+                </div>
 
-            <div className="template-grid">
-              {templates?.map((template) => {
-                const selected = template.id === selectedTemplateId;
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Category</label>
+                    <select
+                      value={draft.category}
+                      onChange={(event) =>
+                        handleFieldChange("category", event.target.value as TemplateFormState["category"])
+                      }
+                    >
+                      <option value="Studio">Studio</option>
+                      <option value="Lifestyle">Lifestyle</option>
+                      <option value="Seasonal">Seasonal</option>
+                      <option value="Brand">Brand</option>
+                    </select>
+                  </div>
 
-                return (
-                  <article key={template.id} className={`template-card ${selected ? "selected" : ""}`}>
+                  <div className="form-group">
+                    <label>Visibility</label>
+                    <select
+                      value={draft.visibility}
+                      onChange={(event) =>
+                        handleFieldChange("visibility", event.target.value as TemplateFormState["visibility"])
+                      }
+                    >
+                      <option value="hidden">Hidden</option>
+                      <option value="public">Public</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-row">
+                  <div className="form-group">
+                    <label>Credits Required</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={draft.creditsRequired}
+                      onChange={(event) => handleFieldChange("creditsRequired", Number(event.target.value))}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Sort Order</label>
+                    <input
+                      type="number"
+                      value={draft.sortOrder}
+                      onChange={(event) => handleFieldChange("sortOrder", Number(event.target.value))}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>
+                    Display Image URL <span className="required">*</span>
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    value={draft.displayImageUrl}
+                    onChange={(event) => handleFieldChange("displayImageUrl", event.target.value)}
+                    placeholder="https://images.unsplash.com/..."
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>
+                    Description <span className="required">*</span>
+                  </label>
+                  <textarea
+                    required
+                    rows={3}
+                    value={draft.description}
+                    onChange={(event) => handleFieldChange("description", event.target.value)}
+                    placeholder="Explain what visual aspects this template generates..."
+                  />
+                </div>
+
+                <div className="form-group">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <label style={{ marginBottom: 0 }}>
+                      Generation Prompt <span className="required">*</span>
+                    </label>
+                    <span className={`char-counter ${draft.prompt.length > 2000 ? "over" : ""}`}>
+                      {draft.prompt.length} / 2000
+                    </span>
+                  </div>
+                  <textarea
+                    required
+                    rows={6}
+                    value={draft.prompt}
+                    onChange={(event) => handleFieldChange("prompt", event.target.value)}
+                    placeholder="Model prompt containing variables, e.g. 'A stunning dynamic portrait of [subject] in cyberpunk style, high-end photography...'"
+                  />
+                </div>
+
+                {actionError && <p className="status error">{actionError}</p>}
+
+                <div className="form-actions">
+                  <button type="submit" className="btn-primary" disabled={isSaving}>
+                    {isSaving ? "Saving changes..." : isEditing ? "Save Style" : "Add to Library"}
+                  </button>
+
+                  {isEditing && (
                     <button
                       type="button"
-                      className="card-select"
-                      onClick={() => setPreviewTemplate(template)}
+                      className="btn-secondary-pill"
+                      onClick={() => {
+                        setSelectedTemplateId(null);
+                        setDraft(emptyTemplate);
+                      }}
                     >
-                      <img src={template.displayImageUrl} alt={template.name} />
-                      <div className="image-overlay-preview">🔍 Quick View</div>
+                      Cancel
                     </button>
+                  )}
+                </div>
+              </form>
+            </aside>
 
-                    <div className="card-body">
-                      <div className="card-topline">
-                        <span className={`badge-tag category-${template.category.toLowerCase()}`}>
-                          {template.category}
-                        </span>
-                        <span className={`card-visibility ${template.visibility}`}>
-                          {template.visibility}
-                        </span>
-                      </div>
-
-                      <h3>{template.name}</h3>
-                      <p>{template.description}</p>
-
-                      <div className="card-meta">
-                        <span className="meta-credits">{template.creditsRequired} Credits</span>
-                        <span className="meta-sort">Index #{template.sortOrder}</span>
-                        {template.badge ? <span className="meta-badge">{template.badge}</span> : null}
-                      </div>
-
-                      <div className="card-actions">
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() => {
-                            setSelectedTemplateId(template.id);
-                            setDraft(toDraft(template));
-                          }}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost danger-btn"
-                          style={{ padding: "8px" }}
-                          onClick={() => void handleDelete(template.id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-
-            {!fetching && templates?.length === 0 && (
-              <div className="empty-state">
-                <h3>Empty library</h3>
-                <p>No template matching your filter. Use the Composer to create one!</p>
+            {/* Template Grid */}
+            <section>
+              <div className="list-panel-header">
+                <h2>Styles Inventory</h2>
+                <span className="record-count">
+                  {fetching ? "Syncing..." : `${templates?.length ?? 0} Styles`}
+                </span>
               </div>
-            )}
-          </section>
-        </section>
-      </main>
 
-      {/* Lightbox / Quick View Modal */}
+              {error && (
+                <div className="status error" style={{ marginBottom: "20px" }}>
+                  {error.message}
+                </div>
+              )}
+
+              <div className="template-grid">
+                {templates?.map((template) => {
+                  const selected = template.id === selectedTemplateId;
+
+                  return (
+                    <article key={template.id} className={`template-card ${selected ? "selected" : ""}`}>
+                      <button
+                        type="button"
+                        className="card-image-wrapper"
+                        onClick={() => setPreviewTemplate(template)}
+                        style={{ width: "100%", border: "none", padding: 0 }}
+                      >
+                        <img src={template.displayImageUrl} alt={template.name} />
+                        <div className="card-image-overlay">Quick View</div>
+                      </button>
+
+                      <div className="card-body">
+                        <div className="card-topline">
+                          <span className={`card-category ${categoryClass(template.category)}`}>
+                            {template.category}
+                          </span>
+                          <span className={`card-vis-tag ${template.visibility}`}>
+                            {template.visibility}
+                          </span>
+                        </div>
+
+                        <h3>{template.name}</h3>
+                        <p className="card-description">{template.description}</p>
+
+                        <div className="card-meta">
+                          <span className="meta-credits">{template.creditsRequired} Credits</span>
+                          <span>Index #{template.sortOrder}</span>
+                          {template.badge ? <span className="meta-badge">{template.badge}</span> : null}
+                        </div>
+
+                        <div className="card-actions">
+                          <button
+                            type="button"
+                            className="btn-pearl"
+                            onClick={() => {
+                              setSelectedTemplateId(template.id);
+                              setDraft(toDraft(template));
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-pearl"
+                            onClick={() => void handleDelete(template.id)}
+                            style={{ color: "#d32f2f" }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+
+              {!fetching && templates?.length === 0 && (
+                <div className="empty-state">
+                  <h3>Empty library</h3>
+                  <p>No templates match your filter. Use the Composer to create one.</p>
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+
+        {/* ── Footer ── */}
+        <footer className="app-footer">
+          <div className="footer-inner">
+            <p>Template Studio &mdash; AI Image Generation Management</p>
+            <p>Connected to Gadget API &middot; Data synced in realtime</p>
+          </div>
+        </footer>
+      </div>
+
+      {/* ── Lightbox Modal ── */}
       {previewTemplate && (
         <div className="modal-overlay" onClick={() => setPreviewTemplate(null)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => setPreviewTemplate(null)}>✕</button>
+            <button className="modal-close" onClick={() => setPreviewTemplate(null)}>
+              ✕
+            </button>
             <div className="modal-grid">
               <div className="modal-image-wrapper">
                 <img src={previewTemplate.displayImageUrl} alt={previewTemplate.name} />
               </div>
               <div className="modal-details">
-                <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                  <span className={`badge-tag category-${previewTemplate.category.toLowerCase()}`}>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <span className={`card-category ${categoryClass(previewTemplate.category)}`}>
                     {previewTemplate.category}
                   </span>
                   {previewTemplate.badge && (
-                    <span className="meta-badge">{previewTemplate.badge}</span>
+                    <span className="card-meta" style={{ fontSize: "11px" }}>
+                      <span className="meta-badge">{previewTemplate.badge}</span>
+                    </span>
                   )}
                 </div>
-                
-                <h2 style={{ fontSize: "2rem" }}>{previewTemplate.name}</h2>
-                <p style={{ color: "var(--text-secondary)", fontSize: "1rem" }}>
-                  {previewTemplate.description}
-                </p>
-                
-                <div style={{ display: "flex", justifyContent: "space-between", background: "rgba(255,255,255,0.03)", padding: "12px", borderRadius: "8px", fontSize: "0.9rem" }}>
-                  <span>Cost: <strong>{previewTemplate.creditsRequired} Credits</strong></span>
-                  <span>Priority Index: <strong>#{previewTemplate.sortOrder}</strong></span>
-                  <span style={{ textTransform: "capitalize" }}>Status: <strong>{previewTemplate.visibility}</strong></span>
+
+                <h2>{previewTemplate.name}</h2>
+                <p className="modal-description">{previewTemplate.description}</p>
+
+                <div className="modal-stats-row">
+                  <span>
+                    Cost: <strong>{previewTemplate.creditsRequired} Credits</strong>
+                  </span>
+                  <span>
+                    Priority: <strong>#{previewTemplate.sortOrder}</strong>
+                  </span>
+                  <span style={{ textTransform: "capitalize" }}>
+                    Status: <strong>{previewTemplate.visibility}</strong>
+                  </span>
                 </div>
 
-                <div className="form-group" style={{ marginTop: "10px" }}>
-                  <label>Generation Prompt</label>
+                <div>
+                  <p className="modal-prompt-label">Generation Prompt</p>
                   <div className="modal-prompt-box">
                     <div className="modal-prompt-text">{previewTemplate.prompt}</div>
                     <button
-                      className="copy-btn"
+                      className="btn-primary"
                       onClick={() => handleCopyPrompt(previewTemplate.prompt)}
                     >
-                      {copied ? "Copied! ✓" : "Copy Prompt"}
+                      {copied ? "Copied ✓" : "Copy Prompt"}
                     </button>
                   </div>
                 </div>
@@ -586,19 +646,18 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
+/* ── Root Page ── */
 export default function Page() {
   const [authenticated, setAuthenticated] = useState(false);
 
   useEffect(() => {
     try {
       const isAuth = window.localStorage.getItem("templatePortalAuth") === "true";
-      if (isAuth) {
-        setAuthenticated(true);
-      }
+      if (isAuth) setAuthenticated(true);
     } catch {
       // Ignored
     }

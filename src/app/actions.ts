@@ -1,6 +1,6 @@
 "use server";
 
-import { AiImagesClient } from "@gadget-client/ai-images";
+import { ShotifyClient } from "@gadget-client/shotify";
 
 const GADGET_API_KEY = process.env.GADGET_API_KEY;
 const GADGET_ENV = process.env.GADGET_ENV || "development";
@@ -9,7 +9,7 @@ if (!GADGET_API_KEY) {
   console.error("Error: GADGET_API_KEY is not defined in the environment.");
 }
 
-const api = new AiImagesClient({
+const api = new ShotifyClient({
   environment: GADGET_ENV,
   authenticationMode: {
     apiKey: GADGET_API_KEY,
@@ -46,7 +46,7 @@ export async function getTemplates(search?: string): Promise<TemplateRecord[]> {
 
 export async function createTemplate(payload: Partial<TemplateRecord>): Promise<TemplateRecord> {
   try {
-    const created = await api.template.create(payload as any);
+    const created = await api.template.upsert({ template: payload } as any);
     return JSON.parse(JSON.stringify(created));
   } catch (error: any) {
     console.error("Failed to create template:", error);
@@ -56,9 +56,9 @@ export async function createTemplate(payload: Partial<TemplateRecord>): Promise<
 
 export async function updateTemplate(id: string, payload: Partial<TemplateRecord>): Promise<TemplateRecord> {
   try {
-    const updated = await api.template.update({
-      id,
-      ...payload,
+    const updated = await api.template.upsert({
+      on: ["id"],
+      template: { id, ...payload },
     } as any);
     return JSON.parse(JSON.stringify(updated));
   } catch (error: any) {
