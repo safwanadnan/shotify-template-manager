@@ -419,6 +419,69 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
 
 .char-counter { font-size: 12px; font-weight: 400; color: var(--ink-muted-48); }
 
+.image-upload-box {
+  display: grid; grid-template-columns: minmax(0, 1fr) 96px; gap: var(--sp-xs);
+  align-items: stretch;
+}
+
+.file-upload-control {
+  position: relative;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--sp-sm);
+  min-height: 48px; padding: 10px 14px;
+  background: var(--surface-pearl);
+  border: 1px dashed rgba(0, 0, 0, 0.18);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.file-upload-control:hover {
+  background: var(--canvas);
+  border-color: rgba(0, 102, 204, 0.35);
+}
+
+.file-upload-control input {
+  position: absolute; inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.file-upload-label {
+  font-size: 13px; font-weight: 700; color: var(--ink-muted-80);
+  white-space: nowrap;
+}
+
+.file-upload-name {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; font-weight: 400; color: var(--ink-muted-48);
+}
+
+.btn-shopify-upload {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 48px; padding: 8px 14px;
+  background: var(--action-blue); color: #ffffff;
+  border: none; border-radius: var(--radius-sm);
+  font-family: var(--font-body); font-size: 14px; font-weight: 600;
+  line-height: 1.2; letter-spacing: -0.224px;
+  cursor: pointer;
+  transition: transform 0.1s ease, opacity 0.15s ease;
+}
+
+.btn-shopify-upload:hover { transform: scale(1.02); }
+.btn-shopify-upload:active { transform: scale(0.96); }
+.btn-shopify-upload:disabled {
+  background: var(--surface-pearl);
+  color: var(--ink-muted-48);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  cursor: not-allowed;
+  transform: none;
+}
+
+.image-upload-note {
+  font-size: 12px; line-height: 1.35; color: #2e7d32;
+}
+
 /* ===================================================================
    STATUS MESSAGES
    =================================================================== */
@@ -916,6 +979,8 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
   .workspace-area { padding: var(--sp-sm); }
   .editor-panel { padding: var(--sp-md); }
   .form-row { grid-template-columns: 1fr; }
+  .image-upload-box { grid-template-columns: 1fr; }
+  .file-upload-control { grid-template-columns: 1fr; align-items: flex-start; }
   .bulk-modal-header,
   .bulk-modal-body,
   .bulk-modal-actions { padding-left: var(--sp-md); padding-right: var(--sp-md); }

@@ -8,6 +8,7 @@ import {
   deleteTemplate,
   bulkUpdateTemplates,
   bulkDeleteTemplates,
+  uploadTemplateImageToShopify,
   type TemplateRecord,
 } from "./actions";
 
@@ -176,7 +177,9 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
   const [bulkEditorOpen, setBulkEditorOpen] = useState(false);
   const [bulkDraft, setBulkDraft] = useState<BulkFormState>(emptyBulkDraft);
   const [draft, setDraft] = useState<TemplateFormState>(emptyTemplate);
-  const [busyAction, setBusyAction] = useState<"create" | "update" | "delete" | "bulkUpdate" | "bulkDelete" | null>(null);
+  const [imageUploadFile, setImageUploadFile] = useState<File | null>(null);
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+  const [busyAction, setBusyAction] = useState<"create" | "update" | "delete" | "bulkUpdate" | "bulkDelete" | "imageUpload" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [templates, setTemplates] = useState<TemplateRecord[]>([]);
@@ -220,10 +223,14 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
   useEffect(() => {
     if (selectedTemplate) {
       setDraft(toDraft(selectedTemplate));
+      setImageUploadFile(null);
+      setImageUploadError(null);
       return;
     }
     if (!selectedTemplateId) {
       setDraft(emptyTemplate);
+      setImageUploadFile(null);
+      setImageUploadError(null);
     }
   }, [selectedTemplate, selectedTemplateId]);
 
@@ -260,13 +267,67 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
 
   const isEditing = Boolean(selectedTemplateId);
   const isSaving = busyAction === "create" || busyAction === "update";
+  const isUploadingImage = busyAction === "imageUpload";
+
+  const shouldUploadImageUrl = (url: string) => {
+    return Boolean(url.trim()) && !/cdn\.shopify\.com|shopifycdn\.net|myshopify\.com\/cdn/i.test(url);
+  };
+
+  const uploadDraftImageToShopify = async () => {
+    const imageUrl = draft.displayImageUrl.trim();
+    if (!imageUploadFile && !shouldUploadImageUrl(imageUrl)) {
+      return imageUrl;
+    }
+
+    const formData = new FormData();
+    if (imageUploadFile) {
+      formData.append("imageFile", imageUploadFile);
+    } else {
+      formData.append("imageUrl", imageUrl);
+    }
+
+    setBusyAction("imageUpload");
+    setImageUploadError(null);
+
+    try {
+      const result = await uploadTemplateImageToShopify(formData);
+      setImageUploadFile(null);
+      setDraft((current) => ({ ...current, displayImageUrl: result.url }));
+      return result.url;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setImageUploadError(message);
+      throw error;
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleManualImageUpload = async () => {
+    try {
+      await uploadDraftImageToShopify();
+    } catch {
+      // The inline status message is set above.
+    }
+  };
 
   const submitTemplate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setActionError(null);
+    setImageUploadError(null);
+
+    let shopifyDisplayImageUrl = draft.displayImageUrl.trim();
+
+    try {
+      shopifyDisplayImageUrl = await uploadDraftImageToShopify();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+      return;
+    }
 
     const payload = {
       ...draft,
+      displayImageUrl: shopifyDisplayImageUrl,
       prompt: draft.prompt.trim(),
       name: draft.name.trim(),
       description: draft.description.trim(),
@@ -600,11 +661,40 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
                   </label>
                   <input
                     type="url"
-                    required
+                    required={!imageUploadFile}
                     value={draft.displayImageUrl}
-                    onChange={(event) => handleFieldChange("displayImageUrl", event.target.value)}
+                    onChange={(event) => {
+                      handleFieldChange("displayImageUrl", event.target.value);
+                      setImageUploadError(null);
+                    }}
                     placeholder="https://images.unsplash.com/..."
                   />
+                  <div className="image-upload-box">
+                    <label className="file-upload-control">
+                      <span className="file-upload-label">Upload from system</span>
+                      <span className="file-upload-name">{imageUploadFile?.name ?? "No file selected"}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(event) => {
+                          setImageUploadFile(event.target.files?.[0] ?? null);
+                          setImageUploadError(null);
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="btn-shopify-upload"
+                      onClick={() => void handleManualImageUpload()}
+                      disabled={isUploadingImage || (!imageUploadFile && !shouldUploadImageUrl(draft.displayImageUrl))}
+                    >
+                      {isUploadingImage ? "Uploading..." : "Upload"}
+                    </button>
+                  </div>
+                  {draft.displayImageUrl && !shouldUploadImageUrl(draft.displayImageUrl) ? (
+                    <p className="image-upload-note">Using Shopify CDN image.</p>
+                  ) : null}
+                  {imageUploadError ? <p className="status error">{imageUploadError}</p> : null}
                 </div>
 
                 <div className="form-group">
