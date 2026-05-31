@@ -4,6 +4,10 @@ import { ShotifyClient } from "@gadget-client/shotify";
 
 const GADGET_API_KEY = process.env.GADGET_API_KEY;
 const GADGET_ENV = process.env.GADGET_ENV || "development";
+const SHOPIFY_SHOP_NAME = process.env.SHOPIFY_SHOP_NAME || process.env.SHOP_NAME || "shotify-2nqf2xwz";
+const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-04";
+const SHOPIFY_CLIENT_ID = process.env.CLIENT_ID;
+const SHOPIFY_CLIENT_SECRET = process.env.CLIENT_SECRET;
 
 if (!GADGET_API_KEY) {
   console.error("Error: GADGET_API_KEY is not defined in the environment.");
@@ -31,6 +35,345 @@ export interface TemplateRecord {
   updatedAt?: string;
 }
 
+type ShopifyGraphQLError = {
+  message: string;
+};
+
+type ShopifyUserError = {
+  field?: string[] | null;
+  message: string;
+};
+
+type ShopifyStagedTarget = {
+  url: string;
+  resourceUrl: string;
+  parameters: { name: string; value: string }[];
+};
+
+function shopifyGraphqlUrl() {
+  return `https://${SHOPIFY_SHOP_NAME}.myshopify.com/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+}
+
+function getFilenameFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const name = parsed.pathname.split("/").filter(Boolean).pop() || "template-image.jpg";
+    return sanitizeFilename(decodeURIComponent(name));
+  } catch {
+    return "template-image.jpg";
+  }
+}
+
+function getMimeTypeFromFilename(filename: string) {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".avif")) return "image/avif";
+  return "image/jpeg";
+}
+
+function sanitizeFilename(filename: string) {
+  const cleaned = filename.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-");
+  return cleaned.includes(".") ? cleaned : `${cleaned || "template-image"}.jpg`;
+}
+
+async function fetchRemoteImageAsFile(imageUrl: string) {
+  const response = await fetch(imageUrl);
+
+  if (!response.ok) {
+    throw new Error(`Could not fetch image URL. HTTP ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.startsWith("image/")) {
+    throw new Error("The URL did not return an image file.");
+  }
+
+  const filename = getFilenameFromUrl(imageUrl);
+  const blob = await response.blob();
+  return new File([blob], filename, { type: contentType || getMimeTypeFromFilename(filename) });
+}
+
+function isShopifyCdnUrl(url: string) {
+  return /cdn\.shopify\.com|shopifycdn\.net|myshopify\.com\/cdn/i.test(url);
+}
+
+function getUserErrorMessage(errors: ShopifyUserError[] = []) {
+  return errors.map((error) => error.message).filter(Boolean).join("; ");
+}
+
+async function getShopifyAccessToken() {
+  if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) {
+    throw new Error("Shopify CLIENT_ID and CLIENT_SECRET must be configured in .env.");
+  }
+
+  const response = await fetch(`https://${SHOPIFY_SHOP_NAME}.myshopify.com/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_id: SHOPIFY_CLIENT_ID,
+      client_secret: SHOPIFY_CLIENT_SECRET,
+      grant_type: "client_credentials",
+    }),
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok || !data?.access_token) {
+    throw new Error(data?.error_description || data?.error || "Failed to authenticate with Shopify.");
+  }
+
+  return data.access_token as string;
+}
+
+async function shopifyGraphql<TData>(
+  query: string,
+  variables: Record<string, unknown>,
+  accessToken: string,
+): Promise<TData> {
+  const response = await fetch(shopifyGraphqlUrl(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": accessToken,
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  const json = await response.json();
+
+  if (!response.ok) {
+    throw new Error(json?.errors?.[0]?.message || `Shopify API request failed with HTTP ${response.status}.`);
+  }
+
+  const graphqlErrors = json.errors as ShopifyGraphQLError[] | undefined;
+  if (graphqlErrors?.length) {
+    const message = graphqlErrors.map((error) => error.message).join("; ");
+    if (/Access denied/i.test(message)) {
+      throw new Error(
+        `${message} Make sure the Shopify app has read_files and write_files Admin API scopes, then reinstall or reauthorize the app so the client-credentials token receives those scopes.`,
+      );
+    }
+    throw new Error(message);
+  }
+
+  return json.data as TData;
+}
+
+async function createShopifyFileFromSource(accessToken: string, originalSource: string, filename: string) {
+  const mutation = `
+    mutation fileCreate($files: [FileCreateInput!]!) {
+      fileCreate(files: $files) {
+        files {
+          id
+          fileStatus
+          alt
+          ... on MediaImage {
+            image { url }
+          }
+        }
+        userErrors { field message }
+      }
+    }
+  `;
+
+  const data = await shopifyGraphql<{
+    fileCreate: {
+      files: { id: string; fileStatus: string; image?: { url?: string | null } | null }[];
+      userErrors: ShopifyUserError[];
+    };
+  }>(
+    mutation,
+    {
+      files: [
+        {
+          contentType: "IMAGE",
+          originalSource,
+          filename,
+          alt: filename.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " "),
+        },
+      ],
+    },
+    accessToken,
+  );
+
+  const userError = getUserErrorMessage(data.fileCreate.userErrors);
+  if (userError) {
+    throw new Error(userError);
+  }
+
+  const file = data.fileCreate.files[0];
+  if (!file?.id) {
+    throw new Error("Shopify did not return a file ID.");
+  }
+
+  if (file.image?.url) {
+    return file.image.url;
+  }
+
+  return pollShopifyImageUrl(accessToken, file.id);
+}
+
+async function createStagedUpload(accessToken: string, file: File) {
+  const mutation = `
+    mutation stagedUploadsCreate($input: [StagedUploadInput!]!) {
+      stagedUploadsCreate(input: $input) {
+        stagedTargets {
+          url
+          resourceUrl
+          parameters { name value }
+        }
+        userErrors { field message }
+      }
+    }
+  `;
+
+  const data = await shopifyGraphql<{
+    stagedUploadsCreate: {
+      stagedTargets: ShopifyStagedTarget[];
+      userErrors: ShopifyUserError[];
+    };
+  }>(
+    mutation,
+    {
+      input: [
+        {
+          filename: sanitizeFilename(file.name || "template-image.jpg"),
+          mimeType: file.type || "image/jpeg",
+          fileSize: String(file.size),
+          resource: "FILE",
+          httpMethod: "POST",
+        },
+      ],
+    },
+    accessToken,
+  );
+
+  const userError = getUserErrorMessage(data.stagedUploadsCreate.userErrors);
+  if (userError) {
+    throw new Error(userError);
+  }
+
+  const target = data.stagedUploadsCreate.stagedTargets[0];
+  if (!target) {
+    throw new Error("Shopify did not return a staged upload target.");
+  }
+
+  return target;
+}
+
+async function uploadFileToStagedTarget(target: ShopifyStagedTarget, file: File) {
+  const formData = new FormData();
+
+  for (const parameter of target.parameters) {
+    formData.append(parameter.name, parameter.value);
+  }
+
+  formData.append("file", file, sanitizeFilename(file.name || "template-image.jpg"));
+
+  const response = await fetch(target.url, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Shopify staged upload failed with HTTP ${response.status}. ${text}`);
+  }
+}
+
+async function pollShopifyImageUrl(accessToken: string, fileId: string) {
+  const query = `
+    query fileNode($id: ID!) {
+      node(id: $id) {
+        ... on MediaImage {
+          id
+          fileStatus
+          image { url }
+        }
+      }
+    }
+  `;
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const data = await shopifyGraphql<{
+      node?: { fileStatus?: string; image?: { url?: string | null } | null } | null;
+    }>(query, { id: fileId }, accessToken);
+
+    const url = data.node?.image?.url;
+    if (url) {
+      return url;
+    }
+
+    if (data.node?.fileStatus === "FAILED") {
+      throw new Error("Shopify failed to process the uploaded image.");
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+
+  throw new Error("Shopify image is still processing. Try again in a moment.");
+}
+
+async function mergeTemplateForUpsert(id: string, payload: Partial<TemplateRecord>) {
+  const existing = await api.template.findOne(id);
+  return {
+    id,
+    name: existing.name,
+    badge: existing.badge ?? undefined,
+    category: existing.category,
+    creditsRequired: existing.creditsRequired,
+    description: existing.description,
+    displayImageUrl: existing.displayImageUrl,
+    prompt: existing.prompt,
+    sortOrder: existing.sortOrder ?? 0,
+    visibility: existing.visibility,
+    ...payload,
+  };
+}
+
+export async function uploadTemplateImageToShopify(formData: FormData): Promise<{ url: string }> {
+  try {
+    const accessToken = await getShopifyAccessToken();
+    const imageUrl = String(formData.get("imageUrl") || "").trim();
+    const imageFile = formData.get("imageFile");
+
+    if (imageFile instanceof File && imageFile.size > 0) {
+      if (!imageFile.type.startsWith("image/")) {
+        throw new Error("Upload an image file.");
+      }
+
+      const target = await createStagedUpload(accessToken, imageFile);
+      await uploadFileToStagedTarget(target, imageFile);
+      const url = await createShopifyFileFromSource(accessToken, target.resourceUrl, sanitizeFilename(imageFile.name));
+      return { url };
+    }
+
+    if (!imageUrl) {
+      throw new Error("Choose an image file or enter an image URL.");
+    }
+
+    if (isShopifyCdnUrl(imageUrl)) {
+      return { url: imageUrl };
+    }
+
+    if (imageUrl.length <= 2048) {
+      const url = await createShopifyFileFromSource(accessToken, imageUrl, getFilenameFromUrl(imageUrl));
+      return { url };
+    }
+
+    const remoteFile = await fetchRemoteImageAsFile(imageUrl);
+    const target = await createStagedUpload(accessToken, remoteFile);
+    await uploadFileToStagedTarget(target, remoteFile);
+    const url = await createShopifyFileFromSource(accessToken, target.resourceUrl, sanitizeFilename(remoteFile.name));
+    return { url };
+  } catch (error: any) {
+    console.error("Failed to upload image to Shopify:", error);
+    throw new Error(error?.message || "Failed to upload image to Shopify");
+  }
+}
+
 export async function getTemplates(search?: string): Promise<TemplateRecord[]> {
   try {
     const templates = await api.template.findMany({
@@ -56,14 +399,37 @@ export async function createTemplate(payload: Partial<TemplateRecord>): Promise<
 
 export async function updateTemplate(id: string, payload: Partial<TemplateRecord>): Promise<TemplateRecord> {
   try {
+    const template = await mergeTemplateForUpsert(id, payload);
     const updated = await api.template.upsert({
       on: ["id"],
-      template: { id, ...payload },
+      template,
     } as any);
     return JSON.parse(JSON.stringify(updated));
   } catch (error: any) {
     console.error("Failed to update template:", error);
     throw new Error(error?.message || "Failed to update template");
+  }
+}
+
+export async function bulkUpdateTemplates(
+  ids: string[],
+  payload: Partial<TemplateRecord>,
+): Promise<TemplateRecord[]> {
+  try {
+    const updates = await Promise.all(
+      ids.map(async (id) => {
+        const template = await mergeTemplateForUpsert(id, payload);
+        return api.template.upsert({
+          on: ["id"],
+          template,
+        } as any);
+      }),
+    );
+
+    return JSON.parse(JSON.stringify(updates));
+  } catch (error: any) {
+    console.error("Failed to bulk update templates:", error);
+    throw new Error(error?.message || "Failed to bulk update templates");
   }
 }
 
@@ -74,5 +440,15 @@ export async function deleteTemplate(id: string): Promise<{ success: boolean }> 
   } catch (error: any) {
     console.error("Failed to delete template:", error);
     throw new Error(error?.message || "Failed to delete template");
+  }
+}
+
+export async function bulkDeleteTemplates(ids: string[]): Promise<{ success: boolean }> {
+  try {
+    await Promise.all(ids.map((id) => api.template.delete(id)));
+    return { success: true };
+  } catch (error: any) {
+    console.error("Failed to bulk delete templates:", error);
+    throw new Error(error?.message || "Failed to bulk delete templates");
   }
 }
