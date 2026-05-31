@@ -67,6 +67,27 @@ export async function updateTemplate(id: string, payload: Partial<TemplateRecord
   }
 }
 
+export async function bulkUpdateTemplates(
+  ids: string[],
+  payload: Partial<TemplateRecord>,
+): Promise<TemplateRecord[]> {
+  try {
+    const updates = await Promise.all(
+      ids.map((id) =>
+        api.template.upsert({
+          on: ["id"],
+          template: { id, ...payload },
+        } as any),
+      ),
+    );
+
+    return JSON.parse(JSON.stringify(updates));
+  } catch (error: any) {
+    console.error("Failed to bulk update templates:", error);
+    throw new Error(error?.message || "Failed to bulk update templates");
+  }
+}
+
 export async function deleteTemplate(id: string): Promise<{ success: boolean }> {
   try {
     await api.template.delete(id);
@@ -74,5 +95,15 @@ export async function deleteTemplate(id: string): Promise<{ success: boolean }> 
   } catch (error: any) {
     console.error("Failed to delete template:", error);
     throw new Error(error?.message || "Failed to delete template");
+  }
+}
+
+export async function bulkDeleteTemplates(ids: string[]): Promise<{ success: boolean }> {
+  try {
+    await Promise.all(ids.map((id) => api.template.delete(id)));
+    return { success: true };
+  } catch (error: any) {
+    console.error("Failed to bulk delete templates:", error);
+    throw new Error(error?.message || "Failed to bulk delete templates");
   }
 }
