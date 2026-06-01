@@ -1,14 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 import {
   getTemplates,
   createTemplate,
+  bulkCreateTemplates,
   updateTemplate,
   deleteTemplate,
   bulkUpdateTemplates,
   bulkDeleteTemplates,
   uploadTemplateImageToShopify,
+  type BulkCreateTemplateResult,
+  type TemplateImportRow,
   type TemplateRecord,
 } from "./actions";
 
@@ -45,6 +49,8 @@ type BulkFormState = {
   prompt: string;
 };
 
+type BulkUploadStatus = BulkCreateTemplateResult | null;
+
 const emptyTemplate: TemplateFormState = {
   name: "",
   badge: "",
@@ -78,6 +84,21 @@ const emptyBulkDraft: BulkFormState = {
   prompt: "",
 };
 
+const importColumns = [
+  "name",
+  "badge",
+  "category",
+  "creditsRequired",
+  "description",
+  "displayImageUrl",
+  "prompt",
+  "sortOrder",
+  "visibility",
+] as const;
+
+const categoryValues = ["Studio", "Lifestyle", "Seasonal", "Brand"] as const;
+const visibilityValues = ["public", "hidden"] as const;
+
 const portalUsername = process.env.PORTAL_USERNAME;
 const portalPassword = process.env.PORTAL_PASSWORD;
 const loginConfigured = Boolean(portalUsername && portalPassword);
@@ -94,6 +115,160 @@ function toDraft(template: Partial<TemplateFormState>): TemplateFormState {
     sortOrder: template.sortOrder ?? 0,
     visibility: template.visibility ?? "hidden",
   };
+}
+
+function normalizeHeader(value: string) {
+  return value.trim().toLowerCase().replace(/[\s_-]+/g, "");
+}
+
+function parseDelimitedText(text: string, delimiter: "," | "\t") {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === "\"") {
+      if (inQuotes && next === "\"") {
+        cell += "\"";
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (!inQuotes && char === delimiter) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+
+    if (!inQuotes && (char === "\n" || char === "\r")) {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+      row.push(cell);
+      if (row.some((value) => value.trim() !== "")) {
+        rows.push(row);
+      }
+      row = [];
+      cell = "";
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell);
+  if (row.some((value) => value.trim() !== "")) {
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function parseHtmlTable(text: string) {
+  const document = new DOMParser().parseFromString(text, "text/html");
+  const tableRows = Array.from(document.querySelectorAll("tr"));
+  return tableRows
+    .map((tableRow) =>
+      Array.from(tableRow.querySelectorAll("th,td")).map((cell) => cell.textContent?.trim() ?? ""),
+    )
+    .filter((row) => row.some(Boolean));
+}
+
+function parseSpreadsheetText(text: string) {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error("The selected file is empty.");
+  }
+
+  if (trimmed.includes("<table") || trimmed.includes("<TABLE")) {
+    return parseHtmlTable(trimmed);
+  }
+
+  if (text.includes("\u0000")) {
+    throw new Error("This looks like a binary Excel file. Save it as CSV or tab-delimited XLS, then import again.");
+  }
+
+  const firstLine = trimmed.split(/\r?\n/, 1)[0] ?? "";
+  const delimiter = firstLine.includes("\t") ? "\t" : ",";
+  return parseDelimitedText(text, delimiter);
+}
+
+async function parseSpreadsheetFile(file: File) {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+
+  if (extension === "csv" || extension === "tsv" || extension === "txt") {
+    return parseSpreadsheetText(await file.text());
+  }
+
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
+  const firstSheetName = workbook.SheetNames[0];
+  const firstSheet = firstSheetName ? workbook.Sheets[firstSheetName] : undefined;
+
+  if (!firstSheet) {
+    throw new Error("The selected spreadsheet does not contain a sheet.");
+  }
+
+  return XLSX.utils
+    .sheet_to_json<string[]>(firstSheet, { header: 1, raw: false, defval: "" })
+    .map((row) => row.map((cell) => String(cell).trim()))
+    .filter((row) => row.some(Boolean));
+}
+
+function mapImportRows(rows: string[][]): TemplateImportRow[] {
+  const [headerRow, ...dataRows] = rows;
+  if (!headerRow) {
+    throw new Error("The file must include a header row.");
+  }
+
+  const headerMap = new Map(headerRow.map((header, index) => [normalizeHeader(header), index]));
+  const missingColumns = importColumns.filter((column) => !headerMap.has(normalizeHeader(column)));
+  if (missingColumns.length > 0) {
+    throw new Error(`Missing columns: ${missingColumns.join(", ")}.`);
+  }
+
+  return dataRows.map((row, index) => {
+    const getValue = (column: (typeof importColumns)[number]) => row[headerMap.get(normalizeHeader(column)) ?? -1]?.trim() ?? "";
+    const category = getValue("category") as TemplateImportRow["category"];
+    const visibility = getValue("visibility") as TemplateImportRow["visibility"];
+    const creditsRequired = Number(getValue("creditsRequired"));
+    const sortOrder = Number(getValue("sortOrder") || 0);
+    const prompt = getValue("prompt");
+
+    if (!categoryValues.includes(category)) {
+      throw new Error(`Row ${index + 2}: category must be Studio, Lifestyle, Seasonal, or Brand.`);
+    }
+    if (!visibilityValues.includes(visibility)) {
+      throw new Error(`Row ${index + 2}: visibility must be public or hidden.`);
+    }
+    if (!Number.isFinite(creditsRequired) || creditsRequired < 1 || creditsRequired > 100) {
+      throw new Error(`Row ${index + 2}: creditsRequired must be a number from 1 to 100.`);
+    }
+    if (!Number.isFinite(sortOrder)) {
+      throw new Error(`Row ${index + 2}: sortOrder must be a number.`);
+    }
+    if (prompt.length < 10 || prompt.length > 2000) {
+      throw new Error(`Row ${index + 2}: prompt must be between 10 and 2000 characters.`);
+    }
+
+    return {
+      name: getValue("name"),
+      badge: getValue("badge") || undefined,
+      category,
+      creditsRequired,
+      description: getValue("description"),
+      displayImageUrl: getValue("displayImageUrl"),
+      prompt,
+      sortOrder,
+      visibility,
+    };
+  });
 }
 
 /* ── Login Portal ── */
@@ -179,7 +354,11 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
   const [draft, setDraft] = useState<TemplateFormState>(emptyTemplate);
   const [imageUploadFile, setImageUploadFile] = useState<File | null>(null);
   const [imageUploadError, setImageUploadError] = useState<string | null>(null);
-  const [busyAction, setBusyAction] = useState<"create" | "update" | "delete" | "bulkUpdate" | "bulkDelete" | "imageUpload" | null>(null);
+  const [bulkUploadFile, setBulkUploadFile] = useState<File | null>(null);
+  const [bulkUploadStatus, setBulkUploadStatus] = useState<BulkUploadStatus>(null);
+  const [busyAction, setBusyAction] = useState<
+    "create" | "update" | "delete" | "bulkUpdate" | "bulkDelete" | "bulkCreate" | "imageUpload" | null
+  >(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [templates, setTemplates] = useState<TemplateRecord[]>([]);
@@ -268,6 +447,7 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
   const isEditing = Boolean(selectedTemplateId);
   const isSaving = busyAction === "create" || busyAction === "update";
   const isUploadingImage = busyAction === "imageUpload";
+  const isBulkCreating = busyAction === "bulkCreate";
 
   const shouldUploadImageUrl = (url: string) => {
     return Boolean(url.trim()) && !/cdn\.shopify\.com|shopifycdn\.net|myshopify\.com\/cdn/i.test(url);
@@ -451,6 +631,44 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
       }
       await fetchTemplates();
       clearBulkSelection();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const handleBulkCreateUpload = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setActionError(null);
+    setBulkUploadStatus(null);
+
+    if (!bulkUploadFile) {
+      setActionError("Choose a CSV or XLS file to import.");
+      return;
+    }
+
+    try {
+      const rows = mapImportRows(await parseSpreadsheetFile(bulkUploadFile));
+
+      if (rows.length === 0) {
+        setActionError("Add at least one template row below the header.");
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Import ${rows.length} templates? Each displayImageUrl will be uploaded to Shopify before creating the template.`,
+      );
+      if (!confirmed) return;
+
+      setBusyAction("bulkCreate");
+      const result = await bulkCreateTemplates(rows);
+      setBulkUploadStatus(result);
+      await fetchTemplates();
+
+      if (result.failed.length === 0) {
+        setBulkUploadFile(null);
+      }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -759,6 +977,51 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
                   {fetching ? "Syncing..." : `${templates?.length ?? 0} Styles`}
                 </span>
               </div>
+
+              <form className="bulk-upload-panel" onSubmit={handleBulkCreateUpload}>
+                <div>
+                  <p className="editor-label">Bulk Upload</p>
+                  <h3>Import templates from CSV, XLS, or XLSX</h3>
+                  <p className="bulk-upload-help">
+                    Use columns: {importColumns.join(", ")}. Image URLs are uploaded to Shopify first.
+                  </p>
+                </div>
+                <div className="bulk-upload-controls">
+                  <label className="file-upload-control">
+                    <span className="file-upload-label">Choose file</span>
+                    <span className="file-upload-name">{bulkUploadFile?.name ?? "CSV, XLS, or XLSX"}</span>
+                    <input
+                      type="file"
+                      accept=".csv,.tsv,.txt,.xls,.xlsx,text/csv,text/tab-separated-values,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      onChange={(event) => {
+                        setBulkUploadFile(event.target.files?.[0] ?? null);
+                        setBulkUploadStatus(null);
+                        setActionError(null);
+                      }}
+                    />
+                  </label>
+                  <button type="submit" className="btn-primary" disabled={isBulkCreating || !bulkUploadFile}>
+                    {isBulkCreating ? "Importing..." : "Import"}
+                  </button>
+                </div>
+                {bulkUploadStatus ? (
+                  <div className="bulk-upload-results">
+                    <p className="status success">
+                      Created {bulkUploadStatus.created.length} templates. Failed {bulkUploadStatus.failed.length}.
+                    </p>
+                    {bulkUploadStatus.failed.length > 0 ? (
+                      <ul className="bulk-upload-failures">
+                        {bulkUploadStatus.failed.map((failure) => (
+                          <li key={`${failure.rowNumber}-${failure.name ?? "row"}`}>
+                            Row {failure.rowNumber}
+                            {failure.name ? ` (${failure.name})` : ""}: {failure.error}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                ) : null}
+              </form>
 
               {hasBulkSelection && (
                 <div className="bulk-action-bar">

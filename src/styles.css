@@ -521,6 +521,56 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
 
 .bulk-action-buttons { display: flex; align-items: center; gap: var(--sp-sm); flex-wrap: wrap; }
 
+.bulk-upload-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 380px);
+  gap: var(--sp-lg);
+  align-items: start;
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-lg);
+  margin-bottom: var(--sp-lg);
+}
+
+.bulk-upload-panel h3 {
+  font-size: 21px;
+  line-height: 1.19;
+  letter-spacing: 0.231px;
+  margin: 0 0 var(--sp-xs);
+}
+
+.bulk-upload-help {
+  font-size: 14px;
+  line-height: 1.43;
+  letter-spacing: -0.224px;
+  color: var(--ink-muted-48);
+}
+
+.bulk-upload-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--sp-xs);
+  align-items: stretch;
+}
+
+.bulk-upload-results {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--sp-xs);
+}
+
+.bulk-upload-failures {
+  list-style-position: inside;
+  background: #fef0f0;
+  border: 1px solid #f5c6cb;
+  border-radius: var(--radius-sm);
+  color: #d32f2f;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: var(--sp-sm) var(--sp-md);
+}
+
 /* ===================================================================
    TEMPLATE GRID
    =================================================================== */
@@ -957,6 +1007,8 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
   .bulk-action-buttons { align-items: stretch; }
   .bulk-action-buttons .btn-primary,
   .bulk-action-buttons .btn-pearl { width: 100%; }
+  .bulk-upload-panel { grid-template-columns: 1fr; }
+  .bulk-upload-controls { grid-template-columns: 1fr; }
   .hero { padding: var(--sp-xl) var(--sp-lg); }
   .hero h1 { font-size: 34px; }
   .hero-tagline { font-size: 17px; }

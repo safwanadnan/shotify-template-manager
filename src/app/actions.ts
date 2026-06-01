@@ -35,6 +35,23 @@ export interface TemplateRecord {
   updatedAt?: string;
 }
 
+export type TemplateImportRow = {
+  name: string;
+  badge?: string;
+  category: TemplateRecord["category"];
+  creditsRequired: number;
+  description: string;
+  displayImageUrl: string;
+  prompt: string;
+  sortOrder: number;
+  visibility: TemplateRecord["visibility"];
+};
+
+export type BulkCreateTemplateResult = {
+  created: TemplateRecord[];
+  failed: { rowNumber: number; name?: string; error: string }[];
+};
+
 type ShopifyGraphQLError = {
   message: string;
 };
@@ -73,6 +90,27 @@ function getMimeTypeFromFilename(filename: string) {
   return "image/jpeg";
 }
 
+function getExtensionFromMimeType(mimeType: string) {
+  if (mimeType.includes("png")) return ".png";
+  if (mimeType.includes("webp")) return ".webp";
+  if (mimeType.includes("gif")) return ".gif";
+  if (mimeType.includes("avif")) return ".avif";
+  return ".jpg";
+}
+
+function hasImageExtension(filename: string) {
+  return /\.(jpe?g|png|webp|gif|avif)$/i.test(filename);
+}
+
+function ensureFilenameMatchesMimeType(filename: string, mimeType: string) {
+  const cleaned = filename.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-") || "template-image";
+  if (hasImageExtension(cleaned)) {
+    return cleaned;
+  }
+
+  return `${cleaned.replace(/\.[^.]+$/, "")}${getExtensionFromMimeType(mimeType)}`;
+}
+
 function sanitizeFilename(filename: string) {
   const cleaned = filename.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-");
   return cleaned.includes(".") ? cleaned : `${cleaned || "template-image"}.jpg`;
@@ -92,7 +130,9 @@ async function fetchRemoteImageAsFile(imageUrl: string) {
 
   const filename = getFilenameFromUrl(imageUrl);
   const blob = await response.blob();
-  return new File([blob], filename, { type: contentType || getMimeTypeFromFilename(filename) });
+  return new File([blob], ensureFilenameMatchesMimeType(filename, contentType), {
+    type: contentType || getMimeTypeFromFilename(filename),
+  });
 }
 
 function isShopifyCdnUrl(url: string) {
@@ -283,6 +323,13 @@ async function uploadFileToStagedTarget(target: ShopifyStagedTarget, file: File)
   }
 }
 
+async function uploadRemoteImageToShopify(accessToken: string, imageUrl: string) {
+  const remoteFile = await fetchRemoteImageAsFile(imageUrl);
+  const target = await createStagedUpload(accessToken, remoteFile);
+  await uploadFileToStagedTarget(target, remoteFile);
+  return createShopifyFileFromSource(accessToken, target.resourceUrl, sanitizeFilename(remoteFile.name));
+}
+
 async function pollShopifyImageUrl(accessToken: string, fileId: string) {
   const query = `
     query fileNode($id: ID!) {
@@ -333,6 +380,21 @@ async function mergeTemplateForUpsert(id: string, payload: Partial<TemplateRecor
   };
 }
 
+function normalizeTemplatePayload(payload: Partial<TemplateRecord>): Partial<TemplateRecord> {
+  return {
+    ...payload,
+    name: payload.name?.trim(),
+    badge: payload.badge?.trim() || undefined,
+    category: payload.category,
+    creditsRequired: Number(payload.creditsRequired ?? 1),
+    description: payload.description?.trim(),
+    displayImageUrl: payload.displayImageUrl?.trim(),
+    prompt: payload.prompt?.trim(),
+    sortOrder: Number(payload.sortOrder ?? 0),
+    visibility: payload.visibility ?? "hidden",
+  };
+}
+
 export async function uploadTemplateImageToShopify(formData: FormData): Promise<{ url: string }> {
   try {
     const accessToken = await getShopifyAccessToken();
@@ -358,15 +420,19 @@ export async function uploadTemplateImageToShopify(formData: FormData): Promise<
       return { url: imageUrl };
     }
 
-    if (imageUrl.length <= 2048) {
-      const url = await createShopifyFileFromSource(accessToken, imageUrl, getFilenameFromUrl(imageUrl));
-      return { url };
+    const filename = getFilenameFromUrl(imageUrl);
+    if (imageUrl.length <= 2048 && hasImageExtension(filename)) {
+      try {
+        const url = await createShopifyFileFromSource(accessToken, imageUrl, filename);
+        return { url };
+      } catch (error: any) {
+        if (!/filename extension must match original source/i.test(error?.message || "")) {
+          throw error;
+        }
+      }
     }
 
-    const remoteFile = await fetchRemoteImageAsFile(imageUrl);
-    const target = await createStagedUpload(accessToken, remoteFile);
-    await uploadFileToStagedTarget(target, remoteFile);
-    const url = await createShopifyFileFromSource(accessToken, target.resourceUrl, sanitizeFilename(remoteFile.name));
+    const url = await uploadRemoteImageToShopify(accessToken, imageUrl);
     return { url };
   } catch (error: any) {
     console.error("Failed to upload image to Shopify:", error);
@@ -389,12 +455,51 @@ export async function getTemplates(search?: string): Promise<TemplateRecord[]> {
 
 export async function createTemplate(payload: Partial<TemplateRecord>): Promise<TemplateRecord> {
   try {
-    const created = await api.template.upsert({ template: payload } as any);
+    const created = await api.template.upsert({ template: normalizeTemplatePayload(payload) } as any);
     return JSON.parse(JSON.stringify(created));
   } catch (error: any) {
     console.error("Failed to create template:", error);
     throw new Error(error?.message || "Failed to create template");
   }
+}
+
+export async function bulkCreateTemplates(rows: TemplateImportRow[]): Promise<BulkCreateTemplateResult> {
+  const created: TemplateRecord[] = [];
+  const failed: BulkCreateTemplateResult["failed"] = [];
+
+  for (const [index, row] of rows.entries()) {
+    const rowNumber = index + 2;
+    const name = row.name?.trim();
+
+    try {
+      const imageUrl = row.displayImageUrl?.trim();
+      if (!imageUrl) {
+        throw new Error("Display image URL is required.");
+      }
+
+      const formData = new FormData();
+      formData.append("imageUrl", imageUrl);
+      const shopifyImage = await uploadTemplateImageToShopify(formData);
+
+      const template = await createTemplate({
+        ...row,
+        displayImageUrl: shopifyImage.url,
+      });
+
+      created.push(template);
+    } catch (error: any) {
+      failed.push({
+        rowNumber,
+        name,
+        error: error?.message || "Failed to import template.",
+      });
+    }
+  }
+
+  return {
+    created: JSON.parse(JSON.stringify(created)),
+    failed,
+  };
 }
 
 export async function updateTemplate(id: string, payload: Partial<TemplateRecord>): Promise<TemplateRecord> {
