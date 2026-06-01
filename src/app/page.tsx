@@ -98,7 +98,7 @@ const importColumns = [
 
 const categoryValues = ["Studio", "Lifestyle", "Seasonal", "Brand"] as const;
 const visibilityValues = ["public", "hidden"] as const;
-const promptMaxLength = 5000;
+const promptMaxLength = 8000;
 
 const portalUsername = process.env.PORTAL_USERNAME;
 const portalPassword = process.env.PORTAL_PASSWORD;
