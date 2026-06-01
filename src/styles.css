@@ -597,6 +597,7 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   overflow: hidden;
+  position: relative;
   display: flex; flex-direction: column;
   transition: transform 0.15s ease;
 }
@@ -608,7 +609,7 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
 .template-card.selected { border-color: var(--action-blue); border-width: 2px; }
 .template-card.bulk-selected { box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.14); }
 
-.bulk-select-control {
+.template-card > .bulk-select-control {
   position: absolute; top: 10px; left: 10px; z-index: 3;
   display: inline-flex; align-items: center; gap: 6px;
   background: rgba(255, 255, 255, 0.92);
@@ -619,7 +620,7 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
   cursor: pointer;
 }
 
-.bulk-select-control input {
+.template-card > .bulk-select-control input {
   width: 14px; height: 14px; accent-color: var(--action-blue);
 }
 
