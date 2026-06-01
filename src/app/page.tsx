@@ -127,6 +127,10 @@ function toDraft(template: Partial<TemplateFormState>): TemplateFormState {
   };
 }
 
+function wait(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
 function normalizeHeader(value: string) {
   return value.trim().toLowerCase().replace(/[\s_-]+/g, "");
 }
@@ -872,6 +876,35 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
     }
   };
 
+  const uploadEmbeddedImageWithRetry = async (rowNumber: number, imageFile: File) => {
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const imageFormData = new FormData();
+        imageFormData.append("imageFile", imageFile);
+        return await uploadTemplateImageToShopify(imageFormData);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[template-manager] handleBulkCreateUpload:embeddedImageUpload:retry", {
+          rowNumber,
+          filename: imageFile.name,
+          attempt,
+          maxAttempts,
+          error: message,
+        });
+
+        if (attempt === maxAttempts) {
+          throw new Error(`Row ${rowNumber}: image upload failed after ${maxAttempts} attempts. ${message}`);
+        }
+
+        await wait(attempt * 2000);
+      }
+    }
+
+    throw new Error(`Row ${rowNumber}: image upload failed.`);
+  };
+
   const handleBulkCreateUpload = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setActionError(null);
@@ -908,26 +941,26 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
 
       const rowsWithShopifyImages: TemplateImportRow[] = [];
       for (const [index, row] of rows.entries()) {
+        const rowNumber = index + 2;
+
         if (!row.displayImageFile) {
           rowsWithShopifyImages.push(row);
           continue;
         }
 
         console.info("[template-manager] handleBulkCreateUpload:embeddedImageUpload:start", {
-          rowNumber: index + 2,
+          rowNumber,
           filename: row.displayImageFile.name,
           size: row.displayImageFile.size,
         });
 
         if (row.displayImageFile.size > maxEmbeddedImageUploadBytes) {
           throw new Error(
-            `Row ${index + 2}: embedded image is too large. Compress it below 19 MB before importing.`,
+            `Row ${rowNumber}: embedded image is too large. Compress it below 19 MB before importing.`,
           );
         }
 
-        const imageFormData = new FormData();
-        imageFormData.append("imageFile", row.displayImageFile);
-        const uploadedImage = await uploadTemplateImageToShopify(imageFormData);
+        const uploadedImage = await uploadEmbeddedImageWithRetry(rowNumber, row.displayImageFile);
         const { displayImageFile, ...rowWithoutFile } = row;
         rowsWithShopifyImages.push({
           ...rowWithoutFile,
@@ -935,8 +968,10 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
         });
 
         console.info("[template-manager] handleBulkCreateUpload:embeddedImageUpload:success", {
-          rowNumber: index + 2,
+          rowNumber,
         });
+
+        await wait(400);
       }
 
       console.info("[template-manager] handleBulkCreateUpload:serverAction:start", { rowCount: rows.length });
@@ -1256,9 +1291,26 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
             <section>
               <div className="list-panel-header">
                 <h2>Styles Inventory</h2>
-                <span className="record-count">
-                  {fetching ? "Syncing..." : `${templates?.length ?? 0} Styles`}
-                </span>
+                <div className="list-panel-actions">
+                  <label className="select-all-control">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      disabled={templates.length === 0}
+                      onChange={(event) => {
+                        if (event.target.checked) {
+                          selectAllVisible();
+                        } else {
+                          clearBulkSelection();
+                        }
+                      }}
+                    />
+                    <span>Select all</span>
+                  </label>
+                  <span className="record-count">
+                    {fetching ? "Syncing..." : `${templates?.length ?? 0} Styles`}
+                  </span>
+                </div>
               </div>
 
               <form className="bulk-upload-panel" onSubmit={handleBulkCreateUpload}>

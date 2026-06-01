@@ -522,6 +522,40 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
 
 .list-panel-header h2 { font-size: 28px; margin: 0; }
 
+.list-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.select-all-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--canvas);
+  border: 1px solid var(--divider-soft);
+  border-radius: var(--radius-pill);
+  color: var(--ink-muted-80);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.select-all-control input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--action-blue);
+}
+
+.select-all-control:has(input:disabled) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .record-count {
   font-size: 14px; font-weight: 600; color: var(--ink-muted-80);
   background: var(--canvas); padding: 6px 14px;
