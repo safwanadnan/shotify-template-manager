@@ -231,7 +231,9 @@ function resolveZipPath(fromPath: string, targetPath: string) {
 
 function getRelationshipTargets(xml: string) {
   const document = new DOMParser().parseFromString(xml, "application/xml");
-  const relationships = Array.from(document.getElementsByTagName("Relationship"));
+  const relationships = Array.from(document.getElementsByTagName("*")).filter(
+    (element) => element.localName === "Relationship",
+  );
   return new Map(
     relationships.map((relationship) => [
       relationship.getAttribute("Id") ?? "",
@@ -245,7 +247,7 @@ function getWorksheetDrawingPath(zip: JSZip, sheetPath: string) {
   if (!sheetXml) return null;
   return sheetXml.async("text").then(async (xml) => {
     const document = new DOMParser().parseFromString(xml, "application/xml");
-    const drawing = Array.from(document.getElementsByTagName("drawing"))[0];
+    const drawing = Array.from(document.getElementsByTagName("*")).find((element) => element.localName === "drawing");
     const drawingRelationshipId = drawing?.getAttribute("r:id");
     if (!drawingRelationshipId) return null;
 
@@ -265,6 +267,59 @@ async function extractEmbeddedImagesByRow(file: File, rows: string[][]) {
   }
 
   const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const mediaPaths = Object.keys(zip.files)
+    .filter((path) => /^xl\/media\/image\d+\.(png|jpe?g|webp|gif)$/i.test(path))
+    .sort((first, second) => {
+      const firstNumber = Number(first.match(/image(\d+)/i)?.[1] ?? 0);
+      const secondNumber = Number(second.match(/image(\d+)/i)?.[1] ?? 0);
+      return firstNumber - secondNumber;
+    });
+
+  const createImageFile = async (mediaPath: string, fallbackIndex: number) => {
+    const mediaFile = zip.file(mediaPath);
+    if (!mediaFile) return null;
+
+    const bytes = await mediaFile.async("arraybuffer");
+    const filename = mediaPath.split("/").pop() ?? `template-image-${fallbackIndex}.png`;
+    const mimeType = filename.toLowerCase().endsWith(".jpg") || filename.toLowerCase().endsWith(".jpeg")
+      ? "image/jpeg"
+      : filename.toLowerCase().endsWith(".webp")
+        ? "image/webp"
+        : filename.toLowerCase().endsWith(".gif")
+          ? "image/gif"
+          : "image/png";
+
+    return new File([bytes], filename, { type: mimeType });
+  };
+
+  const headerRow = rows[0] ?? [];
+  const displayImageColumnIndex = headerRow.findIndex((header) => normalizeHeader(header) === normalizeHeader("displayImageUrl"));
+  const localReferenceImages = new Map<number, File>();
+
+  if (displayImageColumnIndex >= 0 && mediaPaths.length > 0) {
+    for (const [index, row] of rows.slice(1).entries()) {
+      const displayImageValue = row[displayImageColumnIndex]?.trim() ?? "";
+      const localReferenceNumber = Number(displayImageValue.match(/^local_ref:\/\/image_(\d+)\./i)?.[1]);
+      if (!Number.isFinite(localReferenceNumber)) continue;
+
+      const mediaPath = mediaPaths[localReferenceNumber];
+      if (!mediaPath) continue;
+
+      const imageFile = await createImageFile(mediaPath, index + 1);
+      if (imageFile) {
+        localReferenceImages.set(index + 1, imageFile);
+      }
+    }
+  }
+
+  if (localReferenceImages.size > 0) {
+    console.info("[template-manager] extractEmbeddedImagesByRow:localRefs", {
+      localReferenceImages: localReferenceImages.size,
+      mediaFiles: mediaPaths.length,
+    });
+    return localReferenceImages;
+  }
+
   const workbookXml = await zip.file("xl/workbook.xml")?.async("text");
   const workbookRelsXml = await zip.file("xl/_rels/workbook.xml.rels")?.async("text");
   if (!workbookXml || !workbookRelsXml) {
@@ -272,7 +327,7 @@ async function extractEmbeddedImagesByRow(file: File, rows: string[][]) {
   }
 
   const workbook = new DOMParser().parseFromString(workbookXml, "application/xml");
-  const firstSheet = Array.from(workbook.getElementsByTagName("sheet"))[0];
+  const firstSheet = Array.from(workbook.getElementsByTagName("*")).find((element) => element.localName === "sheet");
   const firstSheetRelationshipId = firstSheet?.getAttribute("r:id");
   if (!firstSheetRelationshipId) {
     return new Map<number, File>();
@@ -297,41 +352,46 @@ async function extractEmbeddedImagesByRow(file: File, rows: string[][]) {
     return new Map<number, File>();
   }
 
-  const headerRow = rows[0] ?? [];
-  const displayImageColumnIndex = headerRow.findIndex((header) => normalizeHeader(header) === normalizeHeader("displayImageUrl"));
   const mediaTargets = getRelationshipTargets(drawingRelsXml);
   const drawing = new DOMParser().parseFromString(drawingXml, "application/xml");
-  const anchors = Array.from(drawing.getElementsByTagName("xdr:twoCellAnchor")).concat(
-    Array.from(drawing.getElementsByTagName("xdr:oneCellAnchor")),
+  const anchors = Array.from(drawing.getElementsByTagName("*")).filter(
+    (element) => element.localName === "twoCellAnchor" || element.localName === "oneCellAnchor",
   );
   const images = new Map<number, File>();
+  const allImages: { rowNumber: number; columnNumber: number; file: File }[] = [];
 
   for (const anchor of anchors) {
-    const from = Array.from(anchor.getElementsByTagName("xdr:from"))[0];
-    const rowNumber = Number(Array.from(from?.getElementsByTagName("xdr:row") ?? [])[0]?.textContent);
-    const columnNumber = Number(Array.from(from?.getElementsByTagName("xdr:col") ?? [])[0]?.textContent);
-    const blip = Array.from(anchor.getElementsByTagName("a:blip"))[0];
+    const anchorElements = Array.from(anchor.getElementsByTagName("*"));
+    const from = anchorElements.find((element) => element.localName === "from");
+    const fromElements = from ? Array.from(from.getElementsByTagName("*")) : [];
+    const rowNumber = Number(fromElements.find((element) => element.localName === "row")?.textContent);
+    const columnNumber = Number(fromElements.find((element) => element.localName === "col")?.textContent);
+    const blip = anchorElements.find((element) => element.localName === "blip");
     const embedId = blip?.getAttribute("r:embed");
     const mediaTarget = embedId ? mediaTargets.get(embedId) : undefined;
 
     if (!Number.isFinite(rowNumber) || !mediaTarget) continue;
-    if (displayImageColumnIndex >= 0 && Number.isFinite(columnNumber) && columnNumber !== displayImageColumnIndex) continue;
 
     const mediaPath = resolveZipPath(drawingPath, mediaTarget);
-    const mediaFile = zip.file(mediaPath);
-    if (!mediaFile) continue;
+    const imageFile = await createImageFile(mediaPath, rowNumber);
+    if (!imageFile) continue;
+    allImages.push({
+      rowNumber,
+      columnNumber: Number.isFinite(columnNumber) ? columnNumber : -1,
+      file: imageFile,
+    });
 
-    const bytes = await mediaFile.async("arraybuffer");
-    const filename = mediaPath.split("/").pop() ?? `template-image-${rowNumber}.png`;
-    const mimeType = filename.toLowerCase().endsWith(".jpg") || filename.toLowerCase().endsWith(".jpeg")
-      ? "image/jpeg"
-      : filename.toLowerCase().endsWith(".webp")
-        ? "image/webp"
-        : filename.toLowerCase().endsWith(".gif")
-          ? "image/gif"
-          : "image/png";
+    if (displayImageColumnIndex < 0 || columnNumber === displayImageColumnIndex) {
+      images.set(rowNumber, imageFile);
+    }
+  }
 
-    images.set(rowNumber, new File([bytes], filename, { type: mimeType }));
+  if (images.size === 0 && allImages.length > 0) {
+    allImages
+      .sort((first, second) => first.rowNumber - second.rowNumber || first.columnNumber - second.columnNumber)
+      .forEach((image, index) => {
+        images.set(index + 1, image.file);
+      });
   }
 
   return images;
@@ -830,7 +890,10 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
     try {
       const spreadsheet = await parseSpreadsheetFile(bulkUploadFile);
       const rows = mapImportRows(spreadsheet.rows, spreadsheet.embeddedImagesByRow);
-      console.info("[template-manager] handleBulkCreateUpload:parsed", { rowCount: rows.length });
+      console.info("[template-manager] handleBulkCreateUpload:parsed", {
+        rowCount: rows.length,
+        embeddedImageCount: spreadsheet.embeddedImagesByRow.size,
+      });
 
       if (rows.length === 0) {
         setActionError("Add at least one template row below the header.");
