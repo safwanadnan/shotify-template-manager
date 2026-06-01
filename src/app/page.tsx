@@ -107,6 +107,7 @@ const importColumns = [
 const categoryValues = ["Studio", "Lifestyle", "Seasonal", "Brand"] as const;
 const visibilityValues = ["public", "hidden"] as const;
 const promptMaxLength = 8000;
+const maxEmbeddedImageUploadBytes = 19 * 1024 * 1024;
 
 const portalUsername = process.env.PORTAL_USERNAME;
 const portalPassword = process.env.PORTAL_PASSWORD;
@@ -915,7 +916,14 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
         console.info("[template-manager] handleBulkCreateUpload:embeddedImageUpload:start", {
           rowNumber: index + 2,
           filename: row.displayImageFile.name,
+          size: row.displayImageFile.size,
         });
+
+        if (row.displayImageFile.size > maxEmbeddedImageUploadBytes) {
+          throw new Error(
+            `Row ${index + 2}: embedded image is too large. Compress it below 19 MB before importing.`,
+          );
+        }
 
         const imageFormData = new FormData();
         imageFormData.append("imageFile", row.displayImageFile);
