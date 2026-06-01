@@ -495,12 +495,19 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
     event.preventDefault();
     setActionError(null);
     setImageUploadError(null);
+    console.info("[template-manager] submitTemplate:start", {
+      mode: isEditing ? "update" : "create",
+      selectedTemplateId,
+      hasImageUploadFile: Boolean(imageUploadFile),
+      hasDisplayImageUrl: Boolean(draft.displayImageUrl.trim()),
+    });
 
     let shopifyDisplayImageUrl = draft.displayImageUrl.trim();
 
     try {
       shopifyDisplayImageUrl = await uploadDraftImageToShopify();
     } catch (error) {
+      console.error("[template-manager] submitTemplate:imageUploadFailed", error);
       setActionError(error instanceof Error ? error.message : String(error));
       return;
     }
@@ -519,12 +526,15 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
     try {
       if (isEditing && selectedTemplateId) {
         setBusyAction("update");
+        console.info("[template-manager] submitTemplate:update:start", { selectedTemplateId });
         await updateTemplate(selectedTemplateId, payload);
         await fetchTemplates();
+        console.info("[template-manager] submitTemplate:update:success", { selectedTemplateId });
         return;
       }
 
       setBusyAction("create");
+      console.info("[template-manager] submitTemplate:create:start", { name: payload.name });
       const created = await createTemplate(payload);
       const createdId = created?.id;
 
@@ -532,7 +542,9 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
         setSelectedTemplateId(createdId);
       }
       await fetchTemplates();
+      console.info("[template-manager] submitTemplate:create:success", { createdId });
     } catch (error) {
+      console.error("[template-manager] submitTemplate:failed", error);
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
       setBusyAction(null);
@@ -564,6 +576,7 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
   const handleBulkUpdate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setActionError(null);
+    console.info("[template-manager] handleBulkUpdate:start", { selectedCount: bulkSelectedIds.length });
 
     const payload: Partial<TemplateRecord> = {};
 
@@ -605,11 +618,17 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
 
     try {
       setBusyAction("bulkUpdate");
+      console.info("[template-manager] handleBulkUpdate:serverAction:start", {
+        selectedCount: bulkSelectedIds.length,
+        fields: Object.keys(payload),
+      });
       await bulkUpdateTemplates(bulkSelectedIds, payload);
       await fetchTemplates();
       setBulkEditorOpen(false);
       setBulkDraft(emptyBulkDraft);
+      console.info("[template-manager] handleBulkUpdate:success", { selectedCount: bulkSelectedIds.length });
     } catch (error) {
+      console.error("[template-manager] handleBulkUpdate:failed", error);
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
       setBusyAction(null);
@@ -642,6 +661,10 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
     event.preventDefault();
     setActionError(null);
     setBulkUploadStatus(null);
+    console.info("[template-manager] handleBulkCreateUpload:start", {
+      filename: bulkUploadFile?.name,
+      size: bulkUploadFile?.size,
+    });
 
     if (!bulkUploadFile) {
       setActionError("Choose a CSV or XLS file to import.");
@@ -650,6 +673,7 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
 
     try {
       const rows = mapImportRows(await parseSpreadsheetFile(bulkUploadFile));
+      console.info("[template-manager] handleBulkCreateUpload:parsed", { rowCount: rows.length });
 
       if (rows.length === 0) {
         setActionError("Add at least one template row below the header.");
@@ -662,14 +686,20 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
       if (!confirmed) return;
 
       setBusyAction("bulkCreate");
+      console.info("[template-manager] handleBulkCreateUpload:serverAction:start", { rowCount: rows.length });
       const result = await bulkCreateTemplates(rows);
       setBulkUploadStatus(result);
       await fetchTemplates();
+      console.info("[template-manager] handleBulkCreateUpload:serverAction:complete", {
+        created: result.created.length,
+        failed: result.failed.length,
+      });
 
       if (result.failed.length === 0) {
         setBulkUploadFile(null);
       }
     } catch (error) {
+      console.error("[template-manager] handleBulkCreateUpload:failed", error);
       setActionError(error instanceof Error ? error.message : String(error));
     } finally {
       setBusyAction(null);
@@ -1021,6 +1051,7 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
                     ) : null}
                   </div>
                 ) : null}
+                {actionError ? <p className="status error bulk-upload-results">{actionError}</p> : null}
               </form>
 
               {hasBulkSelection && (
