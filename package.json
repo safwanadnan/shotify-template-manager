@@ -12,6 +12,7 @@
   "dependencies": {
     "@gadget-client/shotify": "^1.46.0-development.1483",
     "dotenv": "^17.4.2",
+    "jszip": "^3.10.1",
     "next": "^16.2.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

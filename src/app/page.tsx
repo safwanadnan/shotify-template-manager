@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import JSZip from "jszip";
 import * as XLSX from "xlsx";
 import {
   getTemplates,
@@ -50,6 +51,13 @@ type BulkFormState = {
 };
 
 type BulkUploadStatus = BulkCreateTemplateResult | null;
+type ParsedTemplateImportRow = TemplateImportRow & {
+  displayImageFile?: File;
+};
+type ParsedSpreadsheet = {
+  rows: string[][];
+  embeddedImagesByRow: Map<number, File>;
+};
 
 const emptyTemplate: TemplateFormState = {
   name: "",
@@ -201,11 +209,139 @@ function parseSpreadsheetText(text: string) {
   return parseDelimitedText(text, delimiter);
 }
 
-async function parseSpreadsheetFile(file: File) {
+function resolveZipPath(fromPath: string, targetPath: string) {
+  if (targetPath.startsWith("/")) {
+    return targetPath.replace(/^\/+/, "");
+  }
+
+  const parts = fromPath.split("/");
+  parts.pop();
+
+  for (const part of targetPath.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      parts.pop();
+    } else {
+      parts.push(part);
+    }
+  }
+
+  return parts.join("/");
+}
+
+function getRelationshipTargets(xml: string) {
+  const document = new DOMParser().parseFromString(xml, "application/xml");
+  const relationships = Array.from(document.getElementsByTagName("Relationship"));
+  return new Map(
+    relationships.map((relationship) => [
+      relationship.getAttribute("Id") ?? "",
+      relationship.getAttribute("Target") ?? "",
+    ]),
+  );
+}
+
+function getWorksheetDrawingPath(zip: JSZip, sheetPath: string) {
+  const sheetXml = zip.file(sheetPath);
+  if (!sheetXml) return null;
+  return sheetXml.async("text").then(async (xml) => {
+    const document = new DOMParser().parseFromString(xml, "application/xml");
+    const drawing = Array.from(document.getElementsByTagName("drawing"))[0];
+    const drawingRelationshipId = drawing?.getAttribute("r:id");
+    if (!drawingRelationshipId) return null;
+
+    const sheetName = sheetPath.split("/").pop();
+    const sheetRelsPath = sheetPath.replace(`/${sheetName}`, `/_rels/${sheetName}.rels`);
+    const sheetRelsXml = await zip.file(sheetRelsPath)?.async("text");
+    if (!sheetRelsXml) return null;
+
+    const drawingTarget = getRelationshipTargets(sheetRelsXml).get(drawingRelationshipId);
+    return drawingTarget ? resolveZipPath(sheetPath, drawingTarget) : null;
+  });
+}
+
+async function extractEmbeddedImagesByRow(file: File, rows: string[][]) {
+  if (!file.name.toLowerCase().endsWith(".xlsx")) {
+    return new Map<number, File>();
+  }
+
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const workbookXml = await zip.file("xl/workbook.xml")?.async("text");
+  const workbookRelsXml = await zip.file("xl/_rels/workbook.xml.rels")?.async("text");
+  if (!workbookXml || !workbookRelsXml) {
+    return new Map<number, File>();
+  }
+
+  const workbook = new DOMParser().parseFromString(workbookXml, "application/xml");
+  const firstSheet = Array.from(workbook.getElementsByTagName("sheet"))[0];
+  const firstSheetRelationshipId = firstSheet?.getAttribute("r:id");
+  if (!firstSheetRelationshipId) {
+    return new Map<number, File>();
+  }
+
+  const sheetTarget = getRelationshipTargets(workbookRelsXml).get(firstSheetRelationshipId);
+  if (!sheetTarget) {
+    return new Map<number, File>();
+  }
+
+  const sheetPath = resolveZipPath("xl/workbook.xml", sheetTarget);
+  const drawingPath = await getWorksheetDrawingPath(zip, sheetPath);
+  if (!drawingPath) {
+    return new Map<number, File>();
+  }
+
+  const drawingXml = await zip.file(drawingPath)?.async("text");
+  const drawingRelsXml = await zip
+    .file(drawingPath.replace("/drawings/", "/drawings/_rels/") + ".rels")
+    ?.async("text");
+  if (!drawingXml || !drawingRelsXml) {
+    return new Map<number, File>();
+  }
+
+  const headerRow = rows[0] ?? [];
+  const displayImageColumnIndex = headerRow.findIndex((header) => normalizeHeader(header) === normalizeHeader("displayImageUrl"));
+  const mediaTargets = getRelationshipTargets(drawingRelsXml);
+  const drawing = new DOMParser().parseFromString(drawingXml, "application/xml");
+  const anchors = Array.from(drawing.getElementsByTagName("xdr:twoCellAnchor")).concat(
+    Array.from(drawing.getElementsByTagName("xdr:oneCellAnchor")),
+  );
+  const images = new Map<number, File>();
+
+  for (const anchor of anchors) {
+    const from = Array.from(anchor.getElementsByTagName("xdr:from"))[0];
+    const rowNumber = Number(Array.from(from?.getElementsByTagName("xdr:row") ?? [])[0]?.textContent);
+    const columnNumber = Number(Array.from(from?.getElementsByTagName("xdr:col") ?? [])[0]?.textContent);
+    const blip = Array.from(anchor.getElementsByTagName("a:blip"))[0];
+    const embedId = blip?.getAttribute("r:embed");
+    const mediaTarget = embedId ? mediaTargets.get(embedId) : undefined;
+
+    if (!Number.isFinite(rowNumber) || !mediaTarget) continue;
+    if (displayImageColumnIndex >= 0 && Number.isFinite(columnNumber) && columnNumber !== displayImageColumnIndex) continue;
+
+    const mediaPath = resolveZipPath(drawingPath, mediaTarget);
+    const mediaFile = zip.file(mediaPath);
+    if (!mediaFile) continue;
+
+    const bytes = await mediaFile.async("arraybuffer");
+    const filename = mediaPath.split("/").pop() ?? `template-image-${rowNumber}.png`;
+    const mimeType = filename.toLowerCase().endsWith(".jpg") || filename.toLowerCase().endsWith(".jpeg")
+      ? "image/jpeg"
+      : filename.toLowerCase().endsWith(".webp")
+        ? "image/webp"
+        : filename.toLowerCase().endsWith(".gif")
+          ? "image/gif"
+          : "image/png";
+
+    images.set(rowNumber, new File([bytes], filename, { type: mimeType }));
+  }
+
+  return images;
+}
+
+async function parseSpreadsheetFile(file: File): Promise<ParsedSpreadsheet> {
   const extension = file.name.split(".").pop()?.toLowerCase();
 
   if (extension === "csv" || extension === "tsv" || extension === "txt") {
-    return parseSpreadsheetText(await file.text());
+    return { rows: parseSpreadsheetText(await file.text()), embeddedImagesByRow: new Map() };
   }
 
   const workbook = XLSX.read(await file.arrayBuffer(), { type: "array" });
@@ -216,13 +352,24 @@ async function parseSpreadsheetFile(file: File) {
     throw new Error("The selected spreadsheet does not contain a sheet.");
   }
 
-  return XLSX.utils
+  const rows = XLSX.utils
     .sheet_to_json<string[]>(firstSheet, { header: 1, raw: false, defval: "" })
     .map((row) => row.map((cell) => String(cell).trim()))
     .filter((row) => row.some(Boolean));
+
+  return { rows, embeddedImagesByRow: await extractEmbeddedImagesByRow(file, rows) };
 }
 
-function mapImportRows(rows: string[][]): TemplateImportRow[] {
+function isRemoteImageSource(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function mapImportRows(rows: string[][], embeddedImagesByRow = new Map<number, File>()): ParsedTemplateImportRow[] {
   const [headerRow, ...dataRows] = rows;
   if (!headerRow) {
     throw new Error("The file must include a header row.");
@@ -241,6 +388,8 @@ function mapImportRows(rows: string[][]): TemplateImportRow[] {
     const creditsRequired = Number(getValue("creditsRequired"));
     const sortOrder = Number(getValue("sortOrder") || 0);
     const prompt = getValue("prompt");
+    const displayImageUrl = getValue("displayImageUrl");
+    const displayImageFile = embeddedImagesByRow.get(index + 1);
 
     if (!categoryValues.includes(category)) {
       throw new Error(`Row ${index + 2}: category must be Studio, Lifestyle, Seasonal, or Brand.`);
@@ -257,6 +406,9 @@ function mapImportRows(rows: string[][]): TemplateImportRow[] {
     if (prompt.length < 10 || prompt.length > promptMaxLength) {
       throw new Error(`Row ${index + 2}: prompt must be between 10 and ${promptMaxLength} characters.`);
     }
+    if (!displayImageFile && !isRemoteImageSource(displayImageUrl)) {
+      throw new Error(`Row ${index + 2}: displayImageUrl must be a public image URL or an embedded XLSX image.`);
+    }
 
     return {
       name: getValue("name"),
@@ -264,7 +416,8 @@ function mapImportRows(rows: string[][]): TemplateImportRow[] {
       category,
       creditsRequired,
       description: getValue("description"),
-      displayImageUrl: getValue("displayImageUrl"),
+      displayImageUrl,
+      displayImageFile,
       prompt,
       sortOrder,
       visibility,
@@ -675,7 +828,8 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
     setBusyAction("bulkCreate");
 
     try {
-      const rows = mapImportRows(await parseSpreadsheetFile(bulkUploadFile));
+      const spreadsheet = await parseSpreadsheetFile(bulkUploadFile);
+      const rows = mapImportRows(spreadsheet.rows, spreadsheet.embeddedImagesByRow);
       console.info("[template-manager] handleBulkCreateUpload:parsed", { rowCount: rows.length });
 
       if (rows.length === 0) {
@@ -688,8 +842,34 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
       );
       if (!confirmed) return;
 
+      const rowsWithShopifyImages: TemplateImportRow[] = [];
+      for (const [index, row] of rows.entries()) {
+        if (!row.displayImageFile) {
+          rowsWithShopifyImages.push(row);
+          continue;
+        }
+
+        console.info("[template-manager] handleBulkCreateUpload:embeddedImageUpload:start", {
+          rowNumber: index + 2,
+          filename: row.displayImageFile.name,
+        });
+
+        const imageFormData = new FormData();
+        imageFormData.append("imageFile", row.displayImageFile);
+        const uploadedImage = await uploadTemplateImageToShopify(imageFormData);
+        const { displayImageFile, ...rowWithoutFile } = row;
+        rowsWithShopifyImages.push({
+          ...rowWithoutFile,
+          displayImageUrl: uploadedImage.url,
+        });
+
+        console.info("[template-manager] handleBulkCreateUpload:embeddedImageUpload:success", {
+          rowNumber: index + 2,
+        });
+      }
+
       console.info("[template-manager] handleBulkCreateUpload:serverAction:start", { rowCount: rows.length });
-      const result = await bulkCreateTemplates(rows);
+      const result = await bulkCreateTemplates(rowsWithShopifyImages);
       setBulkUploadStatus(result);
       await fetchTemplates();
       console.info("[template-manager] handleBulkCreateUpload:serverAction:complete", {
@@ -1015,7 +1195,7 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
                   <p className="editor-label">Bulk Upload</p>
                   <h3>Import templates from CSV, XLS, or XLSX</h3>
                   <p className="bulk-upload-help">
-                    Use columns: {importColumns.join(", ")}. Image URLs are uploaded to Shopify first.
+                    Use columns: {importColumns.join(", ")}. Public image URLs or embedded XLSX images are uploaded to Shopify first.
                   </p>
                 </div>
                 <div className="bulk-upload-controls">
