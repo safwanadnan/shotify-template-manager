@@ -98,6 +98,7 @@ const importColumns = [
 
 const categoryValues = ["Studio", "Lifestyle", "Seasonal", "Brand"] as const;
 const visibilityValues = ["public", "hidden"] as const;
+const promptMaxLength = 5000;
 
 const portalUsername = process.env.PORTAL_USERNAME;
 const portalPassword = process.env.PORTAL_PASSWORD;
@@ -253,8 +254,8 @@ function mapImportRows(rows: string[][]): TemplateImportRow[] {
     if (!Number.isFinite(sortOrder)) {
       throw new Error(`Row ${index + 2}: sortOrder must be a number.`);
     }
-    if (prompt.length < 10 || prompt.length > 2000) {
-      throw new Error(`Row ${index + 2}: prompt must be between 10 and 2000 characters.`);
+    if (prompt.length < 10 || prompt.length > promptMaxLength) {
+      throw new Error(`Row ${index + 2}: prompt must be between 10 and ${promptMaxLength} characters.`);
     }
 
     return {
@@ -671,6 +672,8 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
       return;
     }
 
+    setBusyAction("bulkCreate");
+
     try {
       const rows = mapImportRows(await parseSpreadsheetFile(bulkUploadFile));
       console.info("[template-manager] handleBulkCreateUpload:parsed", { rowCount: rows.length });
@@ -685,7 +688,6 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
       );
       if (!confirmed) return;
 
-      setBusyAction("bulkCreate");
       console.info("[template-manager] handleBulkCreateUpload:serverAction:start", { rowCount: rows.length });
       const result = await bulkCreateTemplates(rows);
       setBulkUploadStatus(result);
@@ -963,8 +965,8 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
                     <label style={{ marginBottom: 0 }}>
                       Generation Prompt <span className="required">*</span>
                     </label>
-                    <span className={`char-counter ${draft.prompt.length > 2000 ? "over" : ""}`}>
-                      {draft.prompt.length} / 2000
+                    <span className={`char-counter ${draft.prompt.length > promptMaxLength ? "over" : ""}`}>
+                      {draft.prompt.length} / {promptMaxLength}
                     </span>
                   </div>
                   <textarea
@@ -1030,7 +1032,12 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
                       }}
                     />
                   </label>
-                  <button type="submit" className="btn-primary" disabled={isBulkCreating || !bulkUploadFile}>
+                  <button
+                    type="submit"
+                    className={`btn-primary ${isBulkCreating ? "is-loading" : ""}`}
+                    disabled={isBulkCreating || !bulkUploadFile}
+                    aria-busy={isBulkCreating}
+                  >
                     {isBulkCreating ? "Importing..." : "Import"}
                   </button>
                 </div>
@@ -1369,8 +1376,8 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
                         />
                         <span>Generation prompt</span>
                       </label>
-                      <span className={`char-counter ${bulkDraft.prompt.length > 2000 ? "over" : ""}`}>
-                        {bulkDraft.prompt.length} / 2000
+                      <span className={`char-counter ${bulkDraft.prompt.length > promptMaxLength ? "over" : ""}`}>
+                        {bulkDraft.prompt.length} / {promptMaxLength}
                       </span>
                     </div>
                     <textarea

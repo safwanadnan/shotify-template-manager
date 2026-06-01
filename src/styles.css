@@ -271,6 +271,16 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
 .btn-primary:focus-visible { outline: 2px solid var(--focus-blue); outline-offset: 2px; }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
+.btn-primary.is-loading::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #ffffff;
+  border-radius: var(--radius-full);
+  animation: spin 0.75s linear infinite;
+}
+
 /* Secondary pill — {component.button-secondary-pill} */
 .btn-secondary-pill {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -983,6 +993,8 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
    =================================================================== */
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+@keyframes spin { to { transform: rotate(360deg); } }
 
 @keyframes slideUp {
   from { opacity: 0; transform: translateY(16px); }
