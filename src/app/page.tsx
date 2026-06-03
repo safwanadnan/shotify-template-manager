@@ -15,6 +15,7 @@ import {
   type BulkCreateTemplateResult,
   type TemplateImportRow,
   type TemplateRecord,
+  type TemplatesPage,
 } from "./actions";
 
 type TemplateFormState = {
@@ -108,6 +109,13 @@ const categoryValues = ["Studio", "Lifestyle", "Seasonal", "Brand"] as const;
 const visibilityValues = ["public", "hidden"] as const;
 const promptMaxLength = 8000;
 const maxEmbeddedImageUploadBytes = 19 * 1024 * 1024;
+const templatesPageSize = 9;
+const emptyTemplatesPageInfo: TemplatesPage["pageInfo"] = {
+  hasNextPage: false,
+  hasPreviousPage: false,
+  startCursor: null,
+  endCursor: null,
+};
 
 const portalUsername = process.env.PORTAL_USERNAME;
 const portalPassword = process.env.PORTAL_PASSWORD;
@@ -581,6 +589,9 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [templates, setTemplates] = useState<TemplateRecord[]>([]);
+  const [templatesPageInfo, setTemplatesPageInfo] = useState<TemplatesPage["pageInfo"]>(emptyTemplatesPageInfo);
+  const [templatesPageAfter, setTemplatesPageAfter] = useState<string | null>(null);
+  const [templatesPageHistory, setTemplatesPageHistory] = useState<(string | null)[]>([]);
   const [fetching, setFetching] = useState<boolean>(true);
   const [error, setError] = useState<any>(null);
 
@@ -591,8 +602,13 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
   const fetchTemplates = async () => {
     setFetching(true);
     try {
-      const data = await getTemplates(search.trim() || undefined);
-      setTemplates(data);
+      const data = await getTemplates({
+        search: search.trim() || undefined,
+        after: templatesPageAfter,
+        first: templatesPageSize,
+      });
+      setTemplates(data.templates);
+      setTemplatesPageInfo(data.pageInfo);
       setError(null);
     } catch (err: any) {
       setError(err);
@@ -603,7 +619,7 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
 
   useEffect(() => {
     fetchTemplates();
-  }, [search]);
+  }, [search, templatesPageAfter]);
 
   const selectedTemplate = useMemo(
     () => templates?.find((template) => template.id === selectedTemplateId) ?? null,
@@ -656,6 +672,18 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
 
   const selectAllVisible = () => {
     setBulkSelectedIds((current) => Array.from(new Set([...current, ...visibleTemplateIds])));
+  };
+
+  const goToNextTemplatesPage = () => {
+    if (!templatesPageInfo.hasNextPage || !templatesPageInfo.endCursor) return;
+    setTemplatesPageHistory((current) => [...current, templatesPageAfter]);
+    setTemplatesPageAfter(templatesPageInfo.endCursor);
+  };
+
+  const goToPreviousTemplatesPage = () => {
+    const previousAfter = templatesPageHistory[templatesPageHistory.length - 1] ?? null;
+    setTemplatesPageHistory((current) => current.slice(0, -1));
+    setTemplatesPageAfter(previousAfter);
   };
 
   const clearBulkSelection = () => {
@@ -1047,7 +1075,7 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
 
           <div className="hero-stats">
             <article className="hero-stat">
-              <span className="hero-stat-label">Total Styles</span>
+              <span className="hero-stat-label">Visible Styles</span>
               <span className="hero-stat-value">{templates?.length ?? 0}</span>
             </article>
             <article className="hero-stat">
@@ -1067,7 +1095,11 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
                 type="search"
                 placeholder="Search styles by name, description, or prompt..."
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                onChange={(event) => {
+                  setTemplatesPageAfter(null);
+                  setTemplatesPageHistory([]);
+                  setSearch(event.target.value);
+                }}
               />
             </div>
 
@@ -1288,7 +1320,7 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
             </aside>
 
             {/* Template Grid */}
-            <section>
+            <section className="inventory-panel">
               <div className="list-panel-header">
                 <h2>Styles Inventory</h2>
                 <div className="list-panel-actions">
@@ -1472,6 +1504,30 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
                   );
                 })}
               </div>
+
+              {(templatesPageHistory.length > 0 || templatesPageInfo.hasNextPage) && (
+                <div className="pagination-bar">
+                  <button
+                    type="button"
+                    className="btn-pearl"
+                    onClick={goToPreviousTemplatesPage}
+                    disabled={fetching || templatesPageHistory.length === 0}
+                  >
+                    Previous
+                  </button>
+                  <span className="pagination-status">
+                    Page {templatesPageHistory.length + 1} · {templates.length} shown
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-pearl"
+                    onClick={goToNextTemplatesPage}
+                    disabled={fetching || !templatesPageInfo.hasNextPage}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
 
               {!fetching && templates?.length === 0 && (
                 <div className="empty-state">

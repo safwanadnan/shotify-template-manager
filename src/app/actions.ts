@@ -46,6 +46,16 @@ export interface TemplateRecord {
   updatedAt?: string;
 }
 
+export type TemplatesPage = {
+  templates: TemplateRecord[];
+  pageInfo: {
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    startCursor: string | null;
+    endCursor: string | null;
+  };
+};
+
 export type TemplateImportRow = {
   name: string;
   badge?: string;
@@ -459,13 +469,24 @@ export async function uploadTemplateImageToShopify(formData: FormData): Promise<
   }
 }
 
-export async function getTemplates(search?: string): Promise<TemplateRecord[]> {
+export async function getTemplates(options: { search?: string; after?: string | null; first?: number } = {}): Promise<TemplatesPage> {
   try {
+    const first = options.first ?? 9;
     const templates = await api.template.findMany({
       sort: { sortOrder: "Ascending" },
-      search: search || undefined,
+      search: options.search || undefined,
+      first,
+      after: options.after || undefined,
     });
-    return JSON.parse(JSON.stringify(templates));
+    return {
+      templates: JSON.parse(JSON.stringify(templates)),
+      pageInfo: {
+        hasNextPage: templates.hasNextPage,
+        hasPreviousPage: templates.hasPreviousPage,
+        startCursor: templates.startCursor || null,
+        endCursor: templates.endCursor || null,
+      },
+    };
   } catch (error: any) {
     console.error("Failed to get templates:", error);
     throw new Error(error?.message || "Failed to fetch templates");

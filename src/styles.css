@@ -363,6 +363,16 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
   padding: var(--sp-lg);
   position: sticky;
   top: 68px;
+  max-height: calc(100vh - 88px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.inventory-panel {
+  max-height: calc(100vh - 88px);
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
 }
 
 .editor-header {
@@ -630,6 +640,24 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
   gap: var(--sp-lg);
+}
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-sm);
+  margin-top: var(--sp-lg);
+  padding: var(--sp-md);
+}
+
+.pagination-status {
+  color: var(--ink-muted-48);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.224px;
+  min-width: 120px;
+  text-align: center;
 }
 
 /* ===================================================================
@@ -1048,7 +1076,17 @@ h2 { font-size: 34px; font-weight: 600; line-height: 1.47; letter-spacing: -0.37
 
 @media (max-width: 1200px) {
   .workspace { grid-template-columns: 1fr; }
-  .editor-panel { max-width: 100%; position: static; }
+  .editor-panel {
+    max-width: 100%;
+    max-height: none;
+    overflow-y: visible;
+    position: static;
+  }
+  .inventory-panel {
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
+  }
 }
 
 @media (max-width: 833px) {
