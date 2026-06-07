@@ -12,10 +12,21 @@ import {
   bulkUpdateTemplates,
   bulkDeleteTemplates,
   uploadTemplateImageToShopify,
+  getModels,
+  createModel,
+  updateModel,
+  deleteModel,
+  bulkCreateModels,
+  bulkUpdateModels,
+  bulkDeleteModels,
   type BulkCreateTemplateResult,
   type TemplateImportRow,
   type TemplateRecord,
   type TemplatesPage,
+  type ModelRecord,
+  type ModelsPage,
+  type ModelImportRow,
+  type BulkCreateModelResult,
 } from "./actions";
 
 type TemplateFormState = {
@@ -572,7 +583,7 @@ function LoginPortal({ onLogin }: { onLogin: () => void }) {
 }
 
 /* ── Main Dashboard ── */
-function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
+function TemplateManager({ onSignOut, hideNav }: { onSignOut: () => void; hideNav?: boolean }) {
   const [search, setSearch] = useState("");
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
@@ -1044,25 +1055,6 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
 
   return (
     <>
-      {/* ── Global Nav ── */}
-      <header className="global-nav">
-        <div className="nav-container">
-          <a href="#" className="nav-logo">
-            <span className="nav-logo-icon">✦</span>
-            <span>Template Studio</span>
-          </a>
-          <div className="nav-actions">
-            <span className="nav-status">
-              <span className="nav-status-dot" />
-              Connected
-            </span>
-            <button onClick={onSignOut} className="btn-dark-utility">
-              Sign Out
-            </button>
-          </div>
-        </div>
-      </header>
-
       <div className="shell">
         {/* ── Hero ── */}
         <section className="hero">
@@ -1823,9 +1815,578 @@ function TemplateManager({ onSignOut }: { onSignOut: () => void }) {
   );
 }
 
+/* ── Models Manager ── */
+type ModelFormState = {
+  name: string;
+  gender: "Men" | "Women";
+  category: string;
+  thumbnailImageUrl: string;
+  previewImages: string[];
+  prompt: string;
+};
+
+type ModelBulkFormState = {
+  updateCategory: boolean;
+  category: string;
+  updateGender: boolean;
+  gender: "Men" | "Women";
+  updatePrompt: boolean;
+  prompt: string;
+};
+
+const emptyModel: ModelFormState = {
+  name: "",
+  gender: "Men",
+  category: "",
+  thumbnailImageUrl: "",
+  previewImages: [],
+  prompt: "",
+};
+
+const emptyModelBulkDraft: ModelBulkFormState = {
+  updateCategory: false,
+  category: "",
+  updateGender: false,
+  gender: "Men",
+  updatePrompt: false,
+  prompt: "",
+};
+
+function toModelDraft(record: Partial<ModelRecord>): ModelFormState {
+  return {
+    name: record.name ?? "",
+    gender: (record.gender as ModelFormState["gender"]) ?? "Men",
+    category: record.category ?? "",
+    thumbnailImageUrl: record.thumbnailImage?.url ?? "",
+    previewImages: Array.isArray(record.previewImages) ? record.previewImages : typeof record.previewImages === "string" ? (record.previewImages as string).split("\n").filter(Boolean) : [],
+    prompt: record.prompt ?? "",
+  };
+}
+
+function mapModelImportRows(rows: string[][]): ModelImportRow[] {
+  const [headerRow, ...dataRows] = rows;
+  if (!headerRow) throw new Error("The file must include a header row.");
+  const h = new Map(headerRow.map((v, i) => [normalizeHeader(v), i]));
+  const required = ["category", "thumbnailurl"];
+  const missing = required.filter((c) => !h.has(c));
+  if (missing.length) throw new Error(`Missing columns: ${missing.join(", ")}.`);
+  return dataRows.map((row, index) => {
+    const get = (key: string) => row[h.get(key) ?? -1]?.trim() ?? "";
+    const previewImages = [
+      get("preview1"), get("preview2"), get("preview3"),
+    ].filter(Boolean);
+    return {
+      category: get("category"),
+      thumbnailUrl: get("thumbnailurl"),
+      previewImages,
+    };
+  }).filter((r) => r.thumbnailUrl);
+}
+
+function ModelsManager() {
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<ModelFormState>(emptyModel);
+  const [models, setModels] = useState<ModelRecord[]>([]);
+  const [pageInfo, setPageInfo] = useState<ModelsPage["pageInfo"]>({
+    hasNextPage: false, hasPreviousPage: false, startCursor: null, endCursor: null,
+  });
+  const [pageAfter, setPageAfter] = useState<string | null>(null);
+  const [pageHistory, setPageHistory] = useState<(string | null)[]>([]);
+  const [fetching, setFetching] = useState(true);
+  const [fetchError, setFetchError] = useState<any>(null);
+  const [busyAction, setBusyAction] = useState<"create" | "update" | "delete" | "bulkUpdate" | "bulkDelete" | "bulkCreate" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [thumbnailUploadFile, setThumbnailUploadFile] = useState<File | null>(null);
+  const [thumbnailUploadError, setThumbnailUploadError] = useState<string | null>(null);
+  const [isUploadingThumbnail, setIsUploadingThumbnail] = useState(false);
+  const [previewModel, setPreviewModel] = useState<ModelRecord | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
+  const [bulkEditorOpen, setBulkEditorOpen] = useState(false);
+  const [bulkDraft, setBulkDraft] = useState<ModelBulkFormState>(emptyModelBulkDraft);
+  const [bulkUploadFile, setBulkUploadFile] = useState<File | null>(null);
+  const [bulkUploadStatus, setBulkUploadStatus] = useState<BulkCreateModelResult | null>(null);
+
+  const fetchModels = async () => {
+    setFetching(true);
+    try {
+      const data = await getModels({ search: search.trim() || undefined, after: pageAfter, first: 9 });
+      setModels(data.models);
+      setPageInfo(data.pageInfo);
+      setFetchError(null);
+    } catch (err: any) {
+      setFetchError(err);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  useEffect(() => { fetchModels(); }, [search, pageAfter]);
+
+  const selectedModel = useMemo(() => models.find((m) => m.id === selectedId) ?? null, [selectedId, models]);
+  const visibleIds = useMemo(() => models.map((m) => m.id), [models]);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => bulkSelectedIds.includes(id));
+  const hasBulkSelection = bulkSelectedIds.length > 0;
+
+  useEffect(() => {
+    if (selectedModel) { setDraft(toModelDraft(selectedModel)); setThumbnailUploadFile(null); setThumbnailUploadError(null); return; }
+    if (!selectedId) { setDraft(emptyModel); setThumbnailUploadFile(null); setThumbnailUploadError(null); }
+  }, [selectedModel, selectedId]);
+
+  const setField = <K extends keyof ModelFormState>(key: K, value: ModelFormState[K]) =>
+    setDraft((cur) => ({ ...cur, [key]: value }));
+
+  const clearBulkSelection = () => { setBulkSelectedIds([]); setBulkEditorOpen(false); };
+  const toggleBulkSelected = (id: string) =>
+    setBulkSelectedIds((cur) => cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]);
+  const selectAllVisible = () =>
+    setBulkSelectedIds((cur) => Array.from(new Set([...cur, ...visibleIds])));
+
+  const uploadThumbnailToShopify = async (): Promise<string> => {
+    const url = draft.thumbnailImageUrl.trim();
+    if (!thumbnailUploadFile && /cdn\.shopify\.com|shopifycdn\.net|myshopify\.com\/cdn/i.test(url)) return url;
+    if (!thumbnailUploadFile && !url) return url;
+    const formData = new FormData();
+    if (thumbnailUploadFile) formData.append("imageFile", thumbnailUploadFile);
+    else formData.append("imageUrl", url);
+    setIsUploadingThumbnail(true);
+    setThumbnailUploadError(null);
+    try {
+      const result = await uploadTemplateImageToShopify(formData);
+      setThumbnailUploadFile(null);
+      setField("thumbnailImageUrl", result.url);
+      return result.url;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setThumbnailUploadError(msg);
+      throw err;
+    } finally {
+      setIsUploadingThumbnail(false);
+    }
+  };
+
+  const isEditing = Boolean(selectedId);
+  const isSaving = busyAction === "create" || busyAction === "update";
+  const isBulkCreating = busyAction === "bulkCreate";
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setActionError(null);
+    let thumbnailUrl = draft.thumbnailImageUrl.trim();
+    try { thumbnailUrl = await uploadThumbnailToShopify(); } catch {
+      setActionError(thumbnailUploadError ?? "Thumbnail upload failed."); return;
+    }
+    const payload: Partial<ModelRecord> = {
+      name: draft.name.trim() || undefined,
+      gender: draft.gender,
+      category: draft.category.trim() || undefined,
+      prompt: draft.prompt.trim(),
+      previewImages: draft.previewImages.map((u) => u.trim()).filter(Boolean),
+      thumbnailImageUrl: thumbnailUrl || undefined,
+    };
+    try {
+      if (isEditing && selectedId) { setBusyAction("update"); await updateModel(selectedId, payload); }
+      else { setBusyAction("create"); const created = await createModel(payload); if (created?.id) setSelectedId(created.id); }
+      await fetchModels();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally { setBusyAction(null); }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm("Delete this model? This cannot be undone.")) return;
+    setActionError(null);
+    try {
+      setBusyAction("delete");
+      await deleteModel(id);
+      if (selectedId === id) { setSelectedId(null); setDraft(emptyModel); }
+      await fetchModels();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally { setBusyAction(null); }
+  };
+
+  const handleBulkUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setActionError(null);
+    const payload: Partial<ModelRecord> = {};
+    if (bulkDraft.updateCategory) payload.category = bulkDraft.category.trim() || undefined;
+    if (bulkDraft.updateGender) payload.gender = bulkDraft.gender;
+    if (bulkDraft.updatePrompt) payload.prompt = bulkDraft.prompt.trim();
+    if (Object.keys(payload).length === 0) { setActionError("Choose at least one field to update."); return; }
+    if (!window.confirm(`Apply changes to ${bulkSelectedIds.length} selected models?`)) return;
+    try {
+      setBusyAction("bulkUpdate");
+      await bulkUpdateModels(bulkSelectedIds, payload);
+      await fetchModels();
+      setBulkEditorOpen(false);
+      setBulkDraft(emptyModelBulkDraft);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally { setBusyAction(null); }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!window.confirm(`Delete ${bulkSelectedIds.length} selected models? This cannot be undone.`)) return;
+    setActionError(null);
+    try {
+      setBusyAction("bulkDelete");
+      await bulkDeleteModels(bulkSelectedIds);
+      if (selectedId && bulkSelectedIds.includes(selectedId)) { setSelectedId(null); setDraft(emptyModel); }
+      await fetchModels();
+      clearBulkSelection();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally { setBusyAction(null); }
+  };
+
+  const handleBulkUpload = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setActionError(null);
+    setBulkUploadStatus(null);
+    if (!bulkUploadFile) { setActionError("Choose a CSV or XLSX file to import."); return; }
+    setBusyAction("bulkCreate");
+    try {
+      const spreadsheet = await parseSpreadsheetFile(bulkUploadFile);
+      const rows = mapModelImportRows(spreadsheet.rows);
+      if (rows.length === 0) { setActionError("No valid rows found."); return; }
+      if (!window.confirm(`Import ${rows.length} models?`)) return;
+      const result = await bulkCreateModels(rows);
+      setBulkUploadStatus(result);
+      await fetchModels();
+      if (result.failed.length === 0) setBulkUploadFile(null);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally { setBusyAction(null); }
+  };
+
+  const categoryClass = (cat: string) => ({ Men: "cat-lifestyle", Women: "cat-studio" }[cat] ?? "");
+
+  return (
+    <div className="shell">
+      <div className="toolbar">
+        <div className="toolbar-inner">
+          <div className="search-wrapper">
+            <span className="search-icon">🔍</span>
+            <input className="search-input" type="search" placeholder="Search models..." value={search}
+              onChange={(e) => { setPageAfter(null); setPageHistory([]); setSearch(e.target.value); }} />
+          </div>
+          <button type="button" className="btn-pearl" onClick={() => { setSelectedId(null); setDraft(emptyModel); }}>Clear / Create New</button>
+          <button type="button" className="btn-pearl" onClick={allVisibleSelected ? clearBulkSelection : selectAllVisible} disabled={models.length === 0}>
+            {allVisibleSelected ? "Clear Selection" : "Select All Visible"}
+          </button>
+        </div>
+      </div>
+
+      <div className="workspace-area">
+        <div className="workspace">
+          {/* Editor */}
+          <aside className="editor-panel">
+            <div className="editor-header">
+              <div>
+                <p className="editor-label">Model Tool</p>
+                <h2>{isEditing ? "Edit Model" : "New Model"}</h2>
+              </div>
+              {isEditing && selectedId && (
+                <button type="button" className="text-link" style={{ color: "#d32f2f" }} onClick={() => void handleDelete(selectedId)}>Delete</button>
+              )}
+            </div>
+
+            <form className="editor-form" onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label>Gender <span className="required">*</span></label>
+                <select value={draft.gender} onChange={(e) => setField("gender", e.target.value as ModelFormState["gender"])}>
+                  <option value="Men">Men</option>
+                  <option value="Women">Women</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Category</label>
+                <input type="text" value={draft.category} onChange={(e) => setField("category", e.target.value)} placeholder="e.g. Casual, Formal, Sportswear" />
+              </div>
+
+              <div className="form-group">
+                <label>Thumbnail Image URL</label>
+                <input type="url" value={draft.thumbnailImageUrl}
+                  onChange={(e) => { setField("thumbnailImageUrl", e.target.value); setThumbnailUploadError(null); }}
+                  placeholder="https://cdn.shopify.com/..." />
+                <div className="image-upload-box">
+                  <label className="file-upload-control">
+                    <span className="file-upload-label">Upload from system</span>
+                    <span className="file-upload-name">{thumbnailUploadFile?.name ?? "No file selected"}</span>
+                    <input type="file" accept="image/*" onChange={(e) => { setThumbnailUploadFile(e.target.files?.[0] ?? null); setThumbnailUploadError(null); }} />
+                  </label>
+                  <button type="button" className="btn-shopify-upload" onClick={() => void uploadThumbnailToShopify()}
+                    disabled={isUploadingThumbnail || (!thumbnailUploadFile && !draft.thumbnailImageUrl.trim())}>
+                    {isUploadingThumbnail ? "Uploading..." : "Upload"}
+                  </button>
+                </div>
+                {thumbnailUploadError && <p className="status error">{thumbnailUploadError}</p>}
+              </div>
+
+              <div className="form-group">
+                <label>Preview Image URLs</label>
+                {(Array.isArray(draft.previewImages) ? draft.previewImages : []).map((url, i) => (
+                  <div key={i} style={{ display: "flex", gap: 6 }}>
+                    <input type="url" value={url} placeholder="https://..."
+                      onChange={(e) => { const urls = [...draft.previewImages]; urls[i] = e.target.value; setField("previewImages", urls); }} />
+                    <button type="button" className="btn-pearl" style={{ padding: "0 10px", flexShrink: 0 }}
+                      onClick={() => setField("previewImages", draft.previewImages.filter((_, j) => j !== i))}>✕</button>
+                  </div>
+                ))}
+                <button type="button" className="btn-pearl" style={{ alignSelf: "flex-start" }}
+                  onClick={() => setField("previewImages", [...draft.previewImages, ""])}>+ Add URL</button>
+              </div>
+
+              <div className="form-group">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <label style={{ marginBottom: 0 }}>Prompt <span className="required">*</span></label>
+                  <span className="char-counter">{draft.prompt.length} / 8000</span>
+                </div>
+                <textarea required rows={6} value={draft.prompt} onChange={(e) => setField("prompt", e.target.value)} placeholder="Model generation prompt..." />
+              </div>
+
+              {actionError && <p className="status error">{actionError}</p>}
+
+              <div className="form-actions">
+                <button type="submit" className="btn-primary" disabled={isSaving}>
+                  {isSaving ? "Saving..." : isEditing ? "Save Model" : "Add Model"}
+                </button>
+                {isEditing && (
+                  <button type="button" className="btn-secondary-pill" onClick={() => { setSelectedId(null); setDraft(emptyModel); }}>Cancel</button>
+                )}
+              </div>
+            </form>
+          </aside>
+
+          {/* Grid */}
+          <section className="inventory-panel">
+            <div className="list-panel-header">
+              <h2>Models Inventory</h2>
+              <div className="list-panel-actions">
+                <label className="select-all-control">
+                  <input type="checkbox" checked={allVisibleSelected} disabled={models.length === 0}
+                    onChange={(e) => e.target.checked ? selectAllVisible() : clearBulkSelection()} />
+                  <span>Select all</span>
+                </label>
+                <span className="record-count">{fetching ? "Syncing..." : `${models.length} Models`}</span>
+              </div>
+            </div>
+
+            {/* Bulk Upload */}
+            <form className="bulk-upload-panel" onSubmit={handleBulkUpload}>
+              <div>
+                <p className="editor-label">Bulk Upload</p>
+                <h3>Import models from CSV or XLSX</h3>
+                <p className="bulk-upload-help">Columns: category, thumbnailUrl, preview1, preview2, preview3. Prompt is set automatically.</p>
+              </div>
+              <div className="bulk-upload-controls">
+                <label className="file-upload-control">
+                  <span className="file-upload-label">Choose file</span>
+                  <span className="file-upload-name">{bulkUploadFile?.name ?? "CSV or XLSX"}</span>
+                  <input type="file" accept=".csv,.xlsx,.xls,text/csv"
+                    onChange={(e) => { setBulkUploadFile(e.target.files?.[0] ?? null); setBulkUploadStatus(null); setActionError(null); }} />
+                </label>
+                <button type="submit" className={`btn-primary ${isBulkCreating ? "is-loading" : ""}`}
+                  disabled={isBulkCreating || !bulkUploadFile} aria-busy={isBulkCreating}>
+                  {isBulkCreating ? "Importing..." : "Import"}
+                </button>
+              </div>
+              {bulkUploadStatus && (
+                <div className="bulk-upload-results">
+                  <p className="status success">Created {bulkUploadStatus.created.length} models. Failed {bulkUploadStatus.failed.length}.</p>
+                  {bulkUploadStatus.failed.length > 0 && (
+                    <ul className="bulk-upload-failures">
+                      {bulkUploadStatus.failed.map((f) => <li key={f.rowNumber}>Row {f.rowNumber}: {f.error}</li>)}
+                    </ul>
+                  )}
+                </div>
+              )}
+              {actionError && <p className="status error bulk-upload-results">{actionError}</p>}
+            </form>
+
+            {/* Bulk action bar */}
+            {hasBulkSelection && (
+              <div className="bulk-action-bar">
+                <div><strong>{bulkSelectedIds.length}</strong> selected</div>
+                <div className="bulk-action-buttons">
+                  <button type="button" className="btn-primary" onClick={() => setBulkEditorOpen(true)} disabled={busyAction === "bulkUpdate"}>Bulk Edit</button>
+                  <button type="button" className="btn-pearl danger" onClick={() => void handleBulkDelete()} disabled={busyAction === "bulkDelete"}>
+                    {busyAction === "bulkDelete" ? "Deleting..." : "Delete Selected"}
+                  </button>
+                  <button type="button" className="text-link" onClick={clearBulkSelection}>Clear</button>
+                </div>
+              </div>
+            )}
+
+            {fetchError && <div className="status error" style={{ marginBottom: 20 }}>{fetchError.message}</div>}
+
+            <div className="template-grid">
+              {models.map((model) => {
+                const selected = model.id === selectedId;
+                const bulkSelected = bulkSelectedIds.includes(model.id);
+                return (
+                  <article key={model.id} className={`template-card ${selected ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""}`}>
+                    <label className="bulk-select-control">
+                      <input type="checkbox" checked={bulkSelected} onChange={() => toggleBulkSelected(model.id)} />
+                      <span>Select</span>
+                    </label>
+                    <button type="button" className="card-image-wrapper" onClick={() => setPreviewModel(model)} style={{ width: "100%", border: "none", padding: 0 }}>
+                      <img src={model.thumbnailImage?.url ?? ""} alt={model.name ?? model.gender} />
+                      <div className="card-image-overlay">Quick View</div>
+                    </button>
+                    <div className="card-body">
+                      <div className="card-topline">
+                        <span className={`card-category ${categoryClass(model.gender ?? "")}`}>{model.gender}</span>
+                        {model.category && <span className="record-count" style={{ fontSize: 11, padding: "2px 8px" }}>{model.category}</span>}
+                      </div>
+                      {model.name && <h3>{model.name}</h3>}
+                      {Array.isArray(model.previewImages) && model.previewImages.length > 0 && (
+                        <div className="model-previews">
+                          {model.previewImages.slice(0, 3).map((url, i) => (
+                            <img key={i} src={url} alt={`Preview ${i + 1}`} className="model-preview-thumb" />
+                          ))}
+                        </div>
+                      )}
+                      <p className="card-description">{model.prompt}</p>
+                      <div className="card-actions">
+                        <button type="button" className="btn-pearl" onClick={() => { setSelectedId(model.id); setDraft(toModelDraft(model)); }}>Edit</button>
+                        <button type="button" className="btn-pearl" style={{ color: "#d32f2f" }} onClick={() => void handleDelete(model.id)}>Delete</button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+
+            {(pageHistory.length > 0 || pageInfo.hasNextPage) && (
+              <div className="pagination-bar">
+                <button type="button" className="btn-pearl" disabled={fetching || pageHistory.length === 0}
+                  onClick={() => { const prev = pageHistory[pageHistory.length - 1] ?? null; setPageHistory((h) => h.slice(0, -1)); setPageAfter(prev); }}>Previous</button>
+                <span className="pagination-status">Page {pageHistory.length + 1} · {models.length} shown</span>
+                <button type="button" className="btn-pearl" disabled={fetching || !pageInfo.hasNextPage}
+                  onClick={() => { if (!pageInfo.endCursor) return; setPageHistory((h) => [...h, pageAfter]); setPageAfter(pageInfo.endCursor); }}>Next</button>
+              </div>
+            )}
+
+            {!fetching && models.length === 0 && (
+              <div className="empty-state"><h3>No models yet</h3><p>Use the Model Tool or Bulk Upload to create models.</p></div>
+            )}
+          </section>
+        </div>
+      </div>
+
+      {/* Bulk Edit Modal */}
+      {bulkEditorOpen && (
+        <div className="modal-overlay" onClick={() => setBulkEditorOpen(false)}>
+          <div className="modal-content bulk-modal" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setBulkEditorOpen(false)}>✕</button>
+            <form className="bulk-edit-form" onSubmit={handleBulkUpdate}>
+              <div className="bulk-modal-header">
+                <div><p className="editor-label">Bulk Editor</p><h2>Edit selected models</h2></div>
+                <span className="bulk-selected-pill">{bulkSelectedIds.length} selected</span>
+              </div>
+              <div className="bulk-modal-body">
+                <section className="bulk-section">
+                  <h3>Fields</h3>
+                  <div className="bulk-field-grid">
+                    <div className="bulk-field">
+                      <label className="bulk-toggle">
+                        <input type="checkbox" checked={bulkDraft.updateCategory}
+                          onChange={(e) => setBulkDraft((d) => ({ ...d, updateCategory: e.target.checked }))} />
+                        <span>Category</span>
+                      </label>
+                      <input type="text" value={bulkDraft.category} disabled={!bulkDraft.updateCategory}
+                        placeholder="e.g. Casual" onChange={(e) => setBulkDraft((d) => ({ ...d, category: e.target.value }))} />
+                    </div>
+                    <div className="bulk-field">
+                      <label className="bulk-toggle">
+                        <input type="checkbox" checked={bulkDraft.updateGender}
+                          onChange={(e) => setBulkDraft((d) => ({ ...d, updateGender: e.target.checked }))} />
+                        <span>Gender</span>
+                      </label>
+                      <select value={bulkDraft.gender} disabled={!bulkDraft.updateGender}
+                        onChange={(e) => setBulkDraft((d) => ({ ...d, gender: e.target.value as "Men" | "Women" }))}>
+                        <option value="Men">Men</option>
+                        <option value="Women">Women</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="bulk-field" style={{ marginTop: 12 }}>
+                    <div className="bulk-field-heading">
+                      <label className="bulk-toggle">
+                        <input type="checkbox" checked={bulkDraft.updatePrompt}
+                          onChange={(e) => setBulkDraft((d) => ({ ...d, updatePrompt: e.target.checked }))} />
+                        <span>Prompt</span>
+                      </label>
+                    </div>
+                    <textarea rows={4} value={bulkDraft.prompt} disabled={!bulkDraft.updatePrompt}
+                      placeholder="Shared prompt for all selected models"
+                      onChange={(e) => setBulkDraft((d) => ({ ...d, prompt: e.target.value }))} />
+                  </div>
+                </section>
+              </div>
+              {actionError && <p className="status error" style={{ margin: "0 var(--sp-xl)" }}>{actionError}</p>}
+              <div className="bulk-modal-actions">
+                <button type="submit" className="btn-primary" disabled={busyAction === "bulkUpdate"}>
+                  {busyAction === "bulkUpdate" ? "Applying..." : "Apply Bulk Changes"}
+                </button>
+                <button type="button" className="btn-secondary-pill" onClick={() => setBulkEditorOpen(false)}>Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Quick View Modal */}
+      {previewModel && (
+        <div className="modal-overlay" onClick={() => setPreviewModel(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setPreviewModel(null)}>✕</button>
+            <div className="modal-grid">
+              <div className="modal-image-wrapper">
+                <img src={previewModel.thumbnailImage?.url ?? ""} alt={previewModel.name ?? previewModel.gender} />
+              </div>
+              <div className="modal-details">
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span className={`card-category ${categoryClass(previewModel.gender ?? "")}`}>{previewModel.gender}</span>
+                  {previewModel.category && <span className="record-count" style={{ fontSize: 11, padding: "2px 8px" }}>{previewModel.category}</span>}
+                </div>
+                <h2>{previewModel.name ?? `${previewModel.gender} Model`}</h2>
+                {Array.isArray(previewModel.previewImages) && previewModel.previewImages.length > 0 && (
+                  <div>
+                    <p className="modal-prompt-label" style={{ marginBottom: 8 }}>Previews</p>
+                    <div className="model-previews">
+                      {previewModel.previewImages.map((url, i) => (
+                        <img key={i} src={url} alt={`Preview ${i + 1}`} className="model-preview-thumb" style={{ width: 80, height: 80 }} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <p className="modal-prompt-label">Generation Prompt</p>
+                  <div className="modal-prompt-box">
+                    <div className="modal-prompt-text">{previewModel.prompt}</div>
+                    <button className="btn-primary" onClick={async () => { await navigator.clipboard.writeText(previewModel.prompt ?? ""); setCopied(true); setTimeout(() => setCopied(false), 2000); }}>
+                      {copied ? "Copied ✓" : "Copy Prompt"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Root Page ── */
 export default function Page() {
   const [authenticated, setAuthenticated] = useState(false);
+  const [activeTab, setActiveTab] = useState<"templates" | "models">("templates");
 
   useEffect(() => {
     try {
@@ -1858,5 +2419,40 @@ export default function Page() {
     return <LoginPortal onLogin={handleLoginSuccess} />;
   }
 
-  return <TemplateManager onSignOut={handleSignOut} />;
+  return (
+    <>
+      <header className="global-nav">
+        <div className="nav-container">
+          <a href="#" className="nav-logo">
+            <span className="nav-logo-icon">❖</span>
+            <span>Template Studio</span>
+          </a>
+          <div className="nav-actions">
+            <span className="nav-status">
+              <span className="nav-status-dot" />
+              Connected
+            </span>
+            <button onClick={handleSignOut} className="btn-dark-utility">Sign Out</button>
+          </div>
+        </div>
+      </header>
+
+      <nav className="module-tabs">
+        <div className="module-tabs-inner">
+          <button className={`module-tab ${activeTab === "templates" ? "active" : ""}`} onClick={() => setActiveTab("templates")}>
+            Templates
+          </button>
+          <button className={`module-tab ${activeTab === "models" ? "active" : ""}`} onClick={() => setActiveTab("models")}>
+            Models
+          </button>
+        </div>
+      </nav>
+
+      {activeTab === "templates" ? (
+        <TemplateManager onSignOut={handleSignOut} hideNav />
+      ) : (
+        <ModelsManager />
+      )}
+    </>
+  );
 }

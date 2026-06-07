@@ -619,3 +619,154 @@ export async function bulkDeleteTemplates(ids: string[]): Promise<{ success: boo
     throw new Error(error?.message || "Failed to bulk delete templates");
   }
 }
+
+// ── Models ──────────────────────────────────────────────────────────
+
+export interface ModelRecord {
+  id: string;
+  name?: string;
+  category?: string;
+  gender?: string;
+  thumbnailImage?: { url?: string; mimeType?: string; fileName?: string };
+  thumbnailImageUrl?: string;
+  previewImages?: string[];
+  prompt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type ModelsPage = {
+  models: ModelRecord[];
+  pageInfo: {
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+    startCursor: string | null;
+    endCursor: string | null;
+  };
+};
+
+function normalizeModelPayload(payload: Partial<ModelRecord>): Record<string, unknown> {
+  return {
+    ...(payload.name !== undefined && { name: payload.name }),
+    ...(payload.category !== undefined && { category: payload.category }),
+    ...(payload.gender !== undefined && payload.gender && { gender: payload.gender }),
+    ...(payload.prompt !== undefined && { prompt: payload.prompt?.trim() }),
+    ...(payload.previewImages !== undefined && { previewImages: payload.previewImages }),
+    ...(payload.thumbnailImageUrl !== undefined && { thumbnailImage: { copyURL: payload.thumbnailImageUrl } }),
+  };
+}
+
+export async function getModels(options: { search?: string; after?: string | null; first?: number } = {}): Promise<ModelsPage> {
+  try {
+    const first = options.first ?? 9;
+    const models = await (api as any).fashionModel.findMany({
+      sort: { createdAt: "Descending" },
+      search: options.search || undefined,
+      first,
+      after: options.after || undefined,
+    });
+    return {
+      models: JSON.parse(JSON.stringify(models)),
+      pageInfo: {
+        hasNextPage: models.hasNextPage,
+        hasPreviousPage: models.hasPreviousPage,
+        startCursor: models.startCursor || null,
+        endCursor: models.endCursor || null,
+      },
+    };
+  } catch (error: any) {
+    console.error("Failed to get models:", error);
+    throw new Error(error?.message || "Failed to fetch models");
+  }
+}
+
+export async function createModel(payload: Partial<ModelRecord>): Promise<ModelRecord> {
+  try {
+    logServerAction("createModel:start", { category: payload.category });
+    const created = await (api as any).fashionModel.create({ fashionModel: normalizeModelPayload(payload) });
+    logServerAction("createModel:success", { id: created.id });
+    return JSON.parse(JSON.stringify(created));
+  } catch (error: any) {
+    console.error("Failed to create model:", error);
+    throw new Error(error?.message || "Failed to create model");
+  }
+}
+
+export async function updateModel(id: string, payload: Partial<ModelRecord>): Promise<ModelRecord> {
+  try {
+    logServerAction("updateModel:start", { id });
+    const updated = await (api as any).fashionModel.update(id, { fashionModel: normalizeModelPayload(payload) });
+    logServerAction("updateModel:success", { id: updated.id });
+    return JSON.parse(JSON.stringify(updated));
+  } catch (error: any) {
+    console.error("Failed to update model:", error);
+    throw new Error(error?.message || "Failed to update model");
+  }
+}
+
+export async function deleteModel(id: string): Promise<{ success: boolean }> {
+  try {
+    await (api as any).fashionModel.delete(id);
+    return { success: true };
+  } catch (error: any) {
+    console.error("Failed to delete model:", error);
+    throw new Error(error?.message || "Failed to delete model");
+  }
+}
+
+export type ModelImportRow = {
+  category: string;
+  thumbnailUrl: string;
+  previewImages: string[];
+};
+
+export type BulkCreateModelResult = {
+  created: ModelRecord[];
+  failed: { rowNumber: number; error: string }[];
+};
+
+const MODEL_PROMPT = "Place that clothing onto that model, maintaining photorealistic quality, natural lighting, and a clean professional look. Keep the clothing's details, colors, and textures accurate.";
+
+export async function bulkCreateModels(rows: ModelImportRow[]): Promise<BulkCreateModelResult> {
+  const created: ModelRecord[] = [];
+  const failed: BulkCreateModelResult["failed"] = [];
+  for (const [index, row] of rows.entries()) {
+    const rowNumber = index + 2;
+    try {
+      const model = await (api as any).fashionModel.create({
+        fashionModel: {
+          category: row.category || undefined,
+          previewImages: row.previewImages.filter(Boolean),
+          prompt: MODEL_PROMPT,
+          ...(row.thumbnailUrl && { thumbnailImage: { copyURL: row.thumbnailUrl } }),
+        },
+      });
+      created.push(JSON.parse(JSON.stringify(model)));
+    } catch (error: any) {
+      failed.push({ rowNumber, error: error?.message || "Failed to create model." });
+    }
+  }
+  return { created: JSON.parse(JSON.stringify(created)), failed };
+}
+
+export async function bulkUpdateModels(ids: string[], payload: Partial<ModelRecord>): Promise<ModelRecord[]> {
+  try {
+    const updates = await Promise.all(
+      ids.map((id) => (api as any).fashionModel.update(id, { fashionModel: normalizeModelPayload(payload) })),
+    );
+    return JSON.parse(JSON.stringify(updates));
+  } catch (error: any) {
+    console.error("Failed to bulk update models:", error);
+    throw new Error(error?.message || "Failed to bulk update models");
+  }
+}
+
+export async function bulkDeleteModels(ids: string[]): Promise<{ success: boolean }> {
+  try {
+    await Promise.all(ids.map((id) => (api as any).fashionModel.delete(id)));
+    return { success: true };
+  } catch (error: any) {
+    console.error("Failed to bulk delete models:", error);
+    throw new Error(error?.message || "Failed to bulk delete models");
+  }
+}

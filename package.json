@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@gadget-client/shotify": "^1.46.0-development.1483",
+    "@gadget-client/shotify": "^1.64.0-development.1971",
     "dotenv": "^17.4.2",
     "jszip": "^3.10.1",
     "next": "^16.2.6",
