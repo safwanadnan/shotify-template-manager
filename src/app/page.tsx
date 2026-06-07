@@ -1876,6 +1876,7 @@ function mapModelImportRows(rows: string[][]): ModelImportRow[] {
       get("preview1"), get("preview2"), get("preview3"),
     ].filter(Boolean);
     return {
+      name: get("name") || undefined,
       category: get("category"),
       thumbnailUrl: get("thumbnailurl"),
       previewImages,
@@ -2095,6 +2096,11 @@ function ModelsManager() {
 
             <form className="editor-form" onSubmit={handleSubmit}>
               <div className="form-group">
+                <label>Name</label>
+                <input type="text" value={draft.name} onChange={(e) => setField("name", e.target.value)} placeholder="e.g. Sofia, James" />
+              </div>
+
+              <div className="form-group">
                 <label>Gender <span className="required">*</span></label>
                 <select value={draft.gender} onChange={(e) => setField("gender", e.target.value as ModelFormState["gender"])}>
                   <option value="Men">Men</option>
@@ -2180,7 +2186,7 @@ function ModelsManager() {
               <div>
                 <p className="editor-label">Bulk Upload</p>
                 <h3>Import models from CSV or XLSX</h3>
-                <p className="bulk-upload-help">Columns: category, thumbnailUrl, preview1, preview2, preview3. Prompt is set automatically.</p>
+                <p className="bulk-upload-help">Columns: name, category, thumbnailUrl, preview1, preview2, preview3. Prompt is set automatically.</p>
               </div>
               <div className="bulk-upload-controls">
                 <label className="file-upload-control">
@@ -2250,7 +2256,6 @@ function ModelsManager() {
                           ))}
                         </div>
                       )}
-                      <p className="card-description">{model.prompt}</p>
                       <div className="card-actions">
                         <button type="button" className="btn-pearl" onClick={() => { setSelectedId(model.id); setDraft(toModelDraft(model)); }}>Edit</button>
                         <button type="button" className="btn-pearl" style={{ color: "#d32f2f" }} onClick={() => void handleDelete(model.id)}>Delete</button>

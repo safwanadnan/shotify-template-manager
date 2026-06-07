@@ -715,6 +715,7 @@ export async function deleteModel(id: string): Promise<{ success: boolean }> {
 }
 
 export type ModelImportRow = {
+  name?: string;
   category: string;
   thumbnailUrl: string;
   previewImages: string[];
@@ -735,6 +736,7 @@ export async function bulkCreateModels(rows: ModelImportRow[]): Promise<BulkCrea
     try {
       const model = await (api as any).fashionModel.create({
         fashionModel: {
+          ...(row.name && { name: row.name }),
           category: row.category || undefined,
           previewImages: row.previewImages.filter(Boolean),
           prompt: MODEL_PROMPT,
